@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { database } from "@/lib/firebase";
+import { ref, set } from "firebase/database";
 
 type Screen = "home" | "create" | "join" | "name" | "lobby";
 
@@ -21,8 +23,13 @@ export default function Home() {
     setScreen("name");
   };
 
-  const enterLobby = () => {
+  const enterLobby = async () => {
     if (!playerName.trim()) return;
+
+    await set(ref(database, `rooms/${roomCode}/players/${playerName}`), {
+      name: playerName,
+    });
+
     setPlayers([playerName]);
     setScreen("lobby");
   };
@@ -59,7 +66,7 @@ export default function Home() {
         <input
           value={roomCode}
           onChange={(e) => setRoomCode(e.target.value)}
-          className="w-full rounded-2xl px-4 py-4 text-black text-lg mb-4"
+          className="w-full rounded-2xl bg-white px-4 py-4 text-green-950 text-lg mb-4"
           placeholder="방 코드 입력"
         />
 
@@ -88,7 +95,7 @@ export default function Home() {
         <input
           value={playerName}
           onChange={(e) => setPlayerName(e.target.value)}
-          className="w-full rounded-2xl px-4 py-4 text-black text-lg mb-4"
+          className="w-full rounded-2xl bg-white px-4 py-4 text-green-950 text-lg mb-4"
           placeholder="예: 용하"
         />
 
@@ -130,7 +137,9 @@ export default function Home() {
     <main className="min-h-screen bg-green-950 text-white flex flex-col items-center justify-center px-6">
       <div className="w-full max-w-sm text-center">
         <div className="text-6xl mb-6">🐑</div>
+
         <h1 className="text-4xl font-bold mb-3">양치기 게임</h1>
+
         <p className="text-green-100 mb-10 leading-relaxed">
           마을 사람들 사이에 숨어 있는 늑대를 찾아내세요.
         </p>
