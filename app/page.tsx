@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { database } from "@/lib/firebase";
+import { database } from "../lib/firebase";
 import { get, onValue, ref, set, update } from "firebase/database";
 
 type Screen = "home" | "create" | "join" | "name" | "lobby" | "game";
