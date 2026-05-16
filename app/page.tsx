@@ -1977,9 +1977,11 @@ export default function Home() {
 
         <div className="mt-6 rounded-2xl bg-white/10 p-4 text-sm text-green-100 leading-relaxed">
           <p className="mb-3">
+            제작자: Yongha Kim
             이 게임은 우왁굳 콘텐츠에서 소개된 양치기 소년 게임 룰을
             바탕으로 제작되었습니다. 원 룰 정리와 아이디어에 도움을 준
-            김눈눈님과 우왁굳님께 감사드립니다.
+            김눈눈님과 우왁굳님께 감사드립니다. 이 게임은 비공식 팬 게임이며 
+            어느 영리적인 목적으로도 사용되지 않습니다.
           </p>
 
           <div className="flex flex-col gap-3">
