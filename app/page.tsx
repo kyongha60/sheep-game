@@ -12,6 +12,12 @@ type Player = {
   eliminated: boolean;
 };
 
+type Bet = {
+  name: string;
+  choice: "신뢰" | "불신";
+  amount: number;
+};
+
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("home");
   const [roomCode, setRoomCode] = useState("");
@@ -29,8 +35,9 @@ export default function Home() {
   const [phase, setPhase] = useState("");
   const [roundInTurn, setRoundInTurn] = useState(1);
 
-  const [betChoice, setBetChoice] = useState("");
-  const [betAmount, setBetAmount] = useState(1);
+  const [trustAmount, setTrustAmount] = useState(0);
+  const [distrustAmount, setDistrustAmount] = useState(0);
+  const [bets, setBets] = useState<Record<string, Bet>>({});
 
   const [isTruth, setIsTruth] = useState<boolean | null>(null);
   const [winner, setWinner] = useState("");
@@ -66,14 +73,17 @@ export default function Home() {
       setRoundInTurn(data.roundInTurn || 1);
       setSpecialEvent(data.specialEvent || "");
       setWinner(data.winner || "");
+      setBets(data.bets || {});
 
       if (data.phase) {
         setPhase(data.phase);
 
         if (data.phase === "draw" || data.phase === "shout") {
-          setBetChoice("");
-          setBetAmount(1);
+          setTrustAmount(0);
+          setDistrustAmount(0);
         }
+      } else {
+        setPhase("");
       }
 
       if (typeof data.isTruth === "boolean") {
@@ -104,8 +114,9 @@ export default function Home() {
     setShout("");
     setPhase("");
     setRoundInTurn(1);
-    setBetChoice("");
-    setBetAmount(1);
+    setTrustAmount(0);
+    setDistrustAmount(0);
+    setBets({});
     setIsTruth(null);
     setWinner("");
     setSpecialEvent("");
@@ -240,28 +251,28 @@ export default function Home() {
       bets: null,
     });
 
-    setBetChoice("");
-    setBetAmount(1);
+    setTrustAmount(0);
+    setDistrustAmount(0);
   };
 
-  const submitBet = async (choice: "신뢰" | "불신") => {
+  const submitBet = async () => {
     if (!playerName || playerName === shepherd) return;
 
-    const safeAmount = Math.min(betAmount, mySheep, 5);
+    const choice = trustAmount > 0 ? "신뢰" : "불신";
+    const amount = trustAmount > 0 ? trustAmount : distrustAmount;
 
-    if (safeAmount <= 0) {
-      alert("베팅할 양이 없습니다.");
+    if (amount <= 0) {
+      alert("양을 최소 1마리 이상 걸어야 합니다.");
       return;
     }
+
+    const safeAmount = Math.min(amount, mySheep, 5);
 
     await set(ref(database, `rooms/${roomCode}/bets/${playerName}`), {
       name: playerName,
       choice,
       amount: safeAmount,
     });
-
-    setBetAmount(safeAmount);
-    setBetChoice(choice);
   };
 
   const calculateResult = async () => {
@@ -381,13 +392,18 @@ export default function Home() {
       isTruth: truth,
       specialEvent: eventName,
     });
+
+    setPlayerScores(updatedPlayers);
+
+    if (updatedPlayers[playerName]) {
+      setMySheep(updatedPlayers[playerName].sheep);
+    }
   };
 
   const nextRound = async () => {
     if (playerName !== shepherd) return;
 
     const order = playerOrder.length > 0 ? playerOrder : players;
-
     const alivePlayers = order.filter((p) => !playerScores[p]?.eliminated);
 
     if (alivePlayers.length <= 1) {
@@ -436,15 +452,335 @@ export default function Home() {
       specialEvent: null,
     });
 
-    setBetChoice("");
-    setBetAmount(1);
+    setTrustAmount(0);
+    setDistrustAmount(0);
   };
 
   const inputClass =
     "w-full rounded-2xl bg-white border border-white/30 px-4 py-4 text-black placeholder-gray-500 text-lg mb-4";
 
-  const orderedPlayers =
-    playerOrder.length > 0 ? playerOrder : players;
+  const orderedPlayers = playerOrder.length > 0 ? playerOrder : players;
+
+  if (screen === "game") {
+    const isShepherd = playerName === shepherd;
+    const maxBet = Math.max(1, Math.min(5, mySheep));
+
+    const totalTrust = Object.values(bets)
+      .filter((bet: any) => bet.choice === "신뢰")
+      .reduce((sum: number, bet: any) => sum + bet.amount, 0);
+
+    const totalDistrust = Object.values(bets)
+      .filter((bet: any) => bet.choice === "불신")
+      .reduce((sum: number, bet: any) => sum + bet.amount, 0);
+
+    if (phase === "finished") {
+      return (
+        <main className="min-h-screen bg-green-950 text-white px-6 py-10">
+          <h1 className="text-4xl font-bold mb-4">게임 종료</h1>
+
+          <div className="rounded-2xl bg-yellow-300 text-green-950 p-6 mb-6">
+            <p className="text-lg font-bold mb-2">우승자</p>
+            <h2 className="text-5xl font-bold">🏆 {winner}</h2>
+          </div>
+
+          <div className="space-y-3">
+            {orderedPlayers.map((name) => {
+              const player = playerScores[name];
+              if (!player) return null;
+
+              return (
+                <div
+                  key={player.name}
+                  className="flex justify-between rounded-2xl bg-white/10 px-4 py-4"
+                >
+                  <span>
+                    {player.eliminated ? "💀" : "🐑"} {player.name}
+                  </span>
+                  <span className="font-bold">{player.sheep}마리</span>
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={resetToHome}
+            className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold mt-8"
+          >
+            홈으로 돌아가기
+          </button>
+        </main>
+      );
+    }
+
+    return (
+      <main className="min-h-screen bg-green-950 text-white px-6 py-10 pb-24">
+        <p className="text-green-200 mb-2">방 코드</p>
+        <div className="text-4xl font-bold tracking-widest mb-5 text-white">
+          {roomCode}
+        </div>
+
+        <div className="rounded-2xl bg-white/10 p-4 mb-5">
+          <div className="flex justify-between items-center mb-3">
+            <p className="text-green-200">플레이어 순서</p>
+            <p className="text-sm text-green-100">외침 {roundInTurn} / 3</p>
+          </div>
+
+          {phase === "betting" && (
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="rounded-xl bg-white text-green-950 p-3 text-center">
+                <p className="text-sm">전체 신뢰</p>
+                <p className="text-2xl font-bold">🐑 {totalTrust}</p>
+              </div>
+
+              <div className="rounded-xl bg-white/10 text-white p-3 text-center">
+                <p className="text-sm">전체 불신</p>
+                <p className="text-2xl font-bold">🐑 {totalDistrust}</p>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {orderedPlayers.map((name, index) => {
+              const player = playerScores[name];
+              if (!player) return null;
+
+              return (
+                <div
+                  key={name}
+                  className={`flex justify-between items-center rounded-2xl px-4 py-3 ${
+                    name === shepherd
+                      ? "bg-yellow-300 text-green-950"
+                      : "bg-white/10 text-white"
+                  }`}
+                >
+                  <span className="font-bold">
+                    {index + 1}. {name}
+                    {name === shepherd ? " 🧑‍🌾" : ""}
+                  </span>
+
+                  <span className="font-bold text-right">
+                    {phase === "betting" && bets[name] ? (
+                      <>
+                        {bets[name].choice} 🐑 {bets[name].amount}
+                      </>
+                    ) : player.eliminated ? (
+                      "탈락"
+                    ) : (
+                      `🐑 ${player.sheep}마리`
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {phase === "result" && (
+          <div className="rounded-2xl bg-yellow-300 text-green-950 p-5 mb-6">
+            <p className="text-lg font-bold mb-2">결과</p>
+
+            <h2 className="text-3xl font-bold mb-5">
+              {isTruth ? "진실이었습니다" : "거짓이었습니다"}
+            </h2>
+
+            {specialEvent && (
+              <div className="rounded-2xl bg-red-500 text-white p-4 mb-5 text-center text-xl font-bold">
+                {specialEvent}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {orderedPlayers.map((name) => {
+                const player = playerScores[name];
+                if (!player) return null;
+
+                return (
+                  <div
+                    key={player.name}
+                    className="flex justify-between rounded-xl bg-white/60 px-4 py-3"
+                  >
+                    <span>
+                      {player.eliminated ? "💀" : "🐑"} {player.name}
+                    </span>
+                    <span className="font-bold">{player.sheep}마리</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {isShepherd && (
+              <button
+                onClick={nextRound}
+                className="w-full rounded-2xl bg-green-950 text-white py-4 text-lg font-bold mt-6"
+              >
+                다음 라운드
+              </button>
+            )}
+          </div>
+        )}
+
+        {isShepherd ? (
+          <div>
+            <h2 className="text-2xl font-bold mb-4">
+              당신은 <span className="text-blue-300">양치기</span>입니다.
+            </h2>
+
+            {!currentCard ? (
+              <button
+                onClick={drawCard}
+                className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold"
+              >
+                카드 뽑기
+              </button>
+            ) : (
+              <div className="rounded-2xl bg-white text-green-950 p-6 text-center">
+                <p className="text-lg mb-2">뽑은 카드</p>
+                <div className="text-5xl font-bold">{currentCard}</div>
+
+                {!shout && (
+                  <div className="mt-6 flex flex-col gap-3">
+                    <button
+                      onClick={() => makeShout("늑대")}
+                      className="w-full rounded-2xl bg-green-950 text-white py-4 text-lg font-bold"
+                    >
+                      늑대가 왔다!
+                    </button>
+
+                    <button
+                      onClick={() => makeShout("평화")}
+                      className="w-full rounded-2xl border border-green-950 py-4 text-lg font-bold"
+                    >
+                      평화롭다
+                    </button>
+                  </div>
+                )}
+
+                {shout && (
+                  <p className="mt-6 text-2xl font-bold">
+                    외침: {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {phase === "betting" && (
+              <button
+                onClick={calculateResult}
+                className="w-full rounded-2xl bg-yellow-300 text-green-950 py-4 text-lg font-bold mt-6"
+              >
+                결과 계산
+              </button>
+            )}
+          </div>
+        ) : (
+          <div>
+            <h2 className="text-2xl font-bold mb-4">당신은 주민입니다.</h2>
+
+            {!shout ? (
+              <p className="text-green-100">양치기의 외침을 기다리세요.</p>
+            ) : bets[playerName] ? (
+              <div className="rounded-2xl bg-white/10 p-5">
+                <p className="text-green-200 mb-2">베팅 완료</p>
+                <p className="text-2xl font-bold">
+                  {bets[playerName].choice} / 양 {bets[playerName].amount}마리
+                </p>
+              </div>
+            ) : (
+              <div>
+                <div className="rounded-2xl bg-white/10 p-5 mb-6">
+                  <p className="text-green-200 mb-2">양치기의 외침</p>
+                  <h2 className="text-4xl font-bold">
+                    {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
+                  </h2>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div className="rounded-2xl bg-white text-green-950 p-4 text-center">
+                    <p className="font-bold mb-3">신뢰</p>
+
+                    <button
+                      onClick={() => {
+                        setTrustAmount(Math.max(0, trustAmount - 1));
+                      }}
+                      className="w-full rounded-xl bg-green-950 text-white py-2 font-bold"
+                    >
+                      -
+                    </button>
+
+                    <div className="text-4xl font-bold my-4">
+                      {trustAmount}
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        if (trustAmount >= maxBet) return;
+                        setDistrustAmount(0);
+                        setTrustAmount(trustAmount + 1);
+                      }}
+                      className="w-full rounded-xl bg-green-950 text-white py-2 font-bold"
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  <div className="rounded-2xl bg-white/10 text-white p-4 text-center">
+                    <p className="font-bold mb-3">불신</p>
+
+                    <button
+                      onClick={() => {
+                        setDistrustAmount(Math.max(0, distrustAmount - 1));
+                      }}
+                      className="w-full rounded-xl bg-white text-green-950 py-2 font-bold"
+                    >
+                      -
+                    </button>
+
+                    <div className="text-4xl font-bold my-4">
+                      {distrustAmount}
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        if (distrustAmount >= maxBet) return;
+                        setTrustAmount(0);
+                        setDistrustAmount(distrustAmount + 1);
+                      }}
+                      className="w-full rounded-xl bg-white text-green-950 py-2 font-bold"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  onClick={submitBet}
+                  className="w-full rounded-2xl bg-yellow-300 text-green-950 py-4 text-lg font-bold"
+                >
+                  베팅 확정
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="fixed bottom-0 left-0 right-0 bg-green-950/95 border-t border-white/20 p-3">
+          <div className="mx-auto max-w-md rounded-xl bg-white/10 px-4 py-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-green-200">{playerName}</span>
+              <span className="font-bold">🐑 {mySheep}마리</span>
+            </div>
+
+            <div className="flex justify-between mt-1">
+              <span className="text-green-200">역할</span>
+              <span className="font-bold">
+                {isShepherd ? "양치기" : "주민"}
+              </span>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   if (screen === "create") {
     return (
@@ -576,273 +912,6 @@ export default function Home() {
             방장이 게임을 시작할 때까지 기다리세요.
           </p>
         )}
-      </main>
-    );
-  }
-
-  if (screen === "game") {
-    const isShepherd = playerName === shepherd;
-    const maxBet = Math.max(1, Math.min(5, mySheep));
-
-    if (phase === "finished") {
-      return (
-        <main className="min-h-screen bg-green-950 text-white px-6 py-10">
-          <h1 className="text-4xl font-bold mb-4">게임 종료</h1>
-
-          <div className="rounded-2xl bg-yellow-300 text-green-950 p-6 mb-6">
-            <p className="text-lg font-bold mb-2">우승자</p>
-            <h2 className="text-5xl font-bold">🏆 {winner}</h2>
-          </div>
-
-          <div className="space-y-3">
-            {orderedPlayers.map((name) => {
-              const player = playerScores[name];
-              if (!player) return null;
-
-              return (
-                <div
-                  key={player.name}
-                  className="flex justify-between rounded-2xl bg-white/10 px-4 py-4"
-                >
-                  <span>
-                    {player.eliminated ? "💀" : "🐑"} {player.name}
-                  </span>
-                  <span className="font-bold">{player.sheep}마리</span>
-                </div>
-              );
-            })}
-          </div>
-
-          <button
-            onClick={resetToHome}
-            className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold mt-8"
-          >
-            홈으로 돌아가기
-          </button>
-        </main>
-      );
-    }
-
-    return (
-      <main className="min-h-screen bg-green-950 text-white px-6 py-10 pb-32">
-        <p className="text-green-200 mb-2">방 코드</p>
-        <div className="text-4xl font-bold tracking-widest mb-6 text-white">
-          {roomCode}
-        </div>
-
-        <div className="rounded-2xl bg-white/10 p-5 mb-6">
-          <p className="text-green-200 mb-3">플레이어 순서</p>
-
-          <div className="space-y-2">
-            {orderedPlayers.map((name, index) => {
-              const player = playerScores[name];
-              if (!player) return null;
-
-              return (
-                <div
-                  key={name}
-                  className={`flex justify-between items-center rounded-2xl px-4 py-3 ${
-                    name === shepherd
-                      ? "bg-yellow-300 text-green-950"
-                      : "bg-white/10 text-white"
-                  }`}
-                >
-                  <span className="font-bold">
-                    {index + 1}. {name === shepherd ? "🧑‍🌾" : "🐑"} {name}
-                  </span>
-
-                  <span className="font-bold">
-                    {player.eliminated ? "탈락" : `${player.sheep}마리`}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="rounded-2xl bg-white/10 p-5 mb-6">
-          <p className="text-green-200 mb-2">현재 양치기</p>
-          <h2 className="text-3xl font-bold">{shepherd}</h2>
-          <p className="mt-3 text-xl">외침 {roundInTurn} / 3</p>
-        </div>
-
-        {phase === "result" && (
-          <div className="rounded-2xl bg-yellow-300 text-green-950 p-5 mb-6">
-            <p className="text-lg font-bold mb-2">결과</p>
-
-            <h2 className="text-3xl font-bold mb-5">
-              {isTruth ? "진실이었습니다" : "거짓이었습니다"}
-            </h2>
-
-            {specialEvent && (
-              <div className="rounded-2xl bg-red-500 text-white p-4 mb-5 text-center text-xl font-bold">
-                {specialEvent}
-              </div>
-            )}
-
-            <div className="space-y-3">
-              {orderedPlayers.map((name) => {
-                const player = playerScores[name];
-                if (!player) return null;
-
-                return (
-                  <div
-                    key={player.name}
-                    className="flex justify-between rounded-xl bg-white/60 px-4 py-3"
-                  >
-                    <span>
-                      {player.eliminated ? "💀" : "🐑"} {player.name}
-                    </span>
-                    <span className="font-bold">{player.sheep}마리</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {isShepherd && (
-              <button
-                onClick={nextRound}
-                className="w-full rounded-2xl bg-green-950 text-white py-4 text-lg font-bold mt-6"
-              >
-                다음 라운드
-              </button>
-            )}
-          </div>
-        )}
-
-        {isShepherd ? (
-          <div>
-            <h2 className="text-2xl font-bold mb-4">당신은 양치기입니다.</h2>
-
-            {!currentCard ? (
-              <button
-                onClick={drawCard}
-                className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold"
-              >
-                카드 뽑기
-              </button>
-            ) : (
-              <div className="rounded-2xl bg-white text-green-950 p-6 text-center">
-                <p className="text-lg mb-2">뽑은 카드</p>
-                <div className="text-5xl font-bold">{currentCard}</div>
-
-                {!shout && (
-                  <div className="mt-6 flex flex-col gap-3">
-                    <button
-                      onClick={() => makeShout("늑대")}
-                      className="w-full rounded-2xl bg-green-950 text-white py-4 text-lg font-bold"
-                    >
-                      늑대가 왔다!
-                    </button>
-
-                    <button
-                      onClick={() => makeShout("평화")}
-                      className="w-full rounded-2xl border border-green-950 py-4 text-lg font-bold"
-                    >
-                      평화롭다
-                    </button>
-                  </div>
-                )}
-
-                {shout && (
-                  <p className="mt-6 text-2xl font-bold">
-                    외침: {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {phase === "betting" && (
-              <button
-                onClick={calculateResult}
-                className="w-full rounded-2xl bg-yellow-300 text-green-950 py-4 text-lg font-bold mt-6"
-              >
-                결과 계산
-              </button>
-            )}
-          </div>
-        ) : (
-          <div>
-            <h2 className="text-2xl font-bold mb-4">당신은 주민입니다.</h2>
-
-            {!shout ? (
-              <p className="text-green-100">양치기의 외침을 기다리세요.</p>
-            ) : betChoice ? (
-              <div className="rounded-2xl bg-white/10 p-5">
-                <p className="text-green-200 mb-2">베팅 완료</p>
-                <p className="text-2xl font-bold">
-                  {betChoice} / 양 {betAmount}마리
-                </p>
-              </div>
-            ) : (
-              <div>
-                <div className="rounded-2xl bg-white/10 p-5 mb-6">
-                  <p className="text-green-200 mb-2">양치기의 외침</p>
-                  <h2 className="text-4xl font-bold">
-                    {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
-                  </h2>
-                </div>
-
-                <p className="mb-3 text-green-100">몇 마리를 걸까요?</p>
-
-                <div className="grid grid-cols-5 gap-2 mb-6">
-                  {Array.from({ length: maxBet }, (_, i) => i + 1).map(
-                    (amount) => (
-                      <button
-                        key={amount}
-                        onClick={() => setBetAmount(amount)}
-                        className={`rounded-xl py-3 font-bold ${
-                          betAmount === amount
-                            ? "bg-white text-green-950"
-                            : "bg-white/10 text-white"
-                        }`}
-                      >
-                        {amount}
-                      </button>
-                    )
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={() => submitBet("신뢰")}
-                    className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold"
-                  >
-                    신뢰
-                  </button>
-
-                  <button
-                    onClick={() => submitBet("불신")}
-                    className="w-full rounded-2xl border border-white/40 py-4 text-lg font-bold"
-                  >
-                    불신
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="fixed bottom-0 left-0 right-0 bg-green-950 border-t border-white/20 p-4">
-          <div className="mx-auto max-w-md rounded-2xl bg-white/10 p-4">
-            <div className="flex justify-between">
-              <span className="text-green-200">내 이름</span>
-              <span className="font-bold">{playerName}</span>
-            </div>
-
-            <div className="flex justify-between mt-2">
-              <span className="text-green-200">내 양</span>
-              <span className="font-bold">🐑 {mySheep}마리</span>
-            </div>
-
-            <div className="flex justify-between mt-2">
-              <span className="text-green-200">내 역할</span>
-              <span className="font-bold">
-                {isShepherd ? "양치기" : "주민"}
-              </span>
-            </div>
-          </div>
-        </div>
       </main>
     );
   }
