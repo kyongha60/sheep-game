@@ -7,13 +7,13 @@ import { getAnalytics } from "firebase/analytics";
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyBEU5Y5PfuDEh4H0kXnQiWnImu6W6aT0J4",
-  authDomain: "sheep-game-a104e.firebaseapp.com",
-  projectId: "sheep-game-a104e",
-  storageBucket: "sheep-game-a104e.firebasestorage.app",
-  messagingSenderId: "703255341391",
-  appId: "1:703255341391:web:235c61a0b4a95b0aea7d3a",
-  measurementId: "G-KGFTZ27W87"
+  apiKey: "AIzaSyCQUyhkpG4iuu77GTN3NvFrOH5deCAfrlM",
+  authDomain: "sheep-game-e1aa0.firebaseapp.com",
+  projectId: "sheep-game-e1aa0",
+  storageBucket: "sheep-game-e1aa0.firebasestorage.app",
+  messagingSenderId: "1003450643999",
+  appId: "1:1003450643999:web:dea1e25dcb243dac33c72a",
+  measurementId: "G-FKNQED719B"
 };
 
 // Initialize Firebase
