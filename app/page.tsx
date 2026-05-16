@@ -10,6 +10,7 @@ type Player = {
   name: string;
   sheep: number;
   eliminated: boolean;
+  left?: boolean;
 };
 
 type Bet = {
@@ -17,6 +18,8 @@ type Bet = {
   choice: "신뢰" | "불신";
   amount: number;
 };
+
+type SoundName = "click" | "card" | "bet" | "result" | "sheep";
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("home");
@@ -39,7 +42,7 @@ export default function Home() {
   const [totalRounds, setTotalRounds] = useState(7);
   const [shoutsPerTurn, setShoutsPerTurn] = useState(3);
   const [startingSheep, setStartingSheep] = useState(7);
-  const [drawTimeLimit, setDrawTimeLimit] = useState(30);
+  const [shoutTimeLimit, setShoutTimeLimit] = useState(30);
   const [betTimeLimit, setBetTimeLimit] = useState(180);
   const [phaseEndsAt, setPhaseEndsAt] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState(0);
@@ -50,20 +53,35 @@ export default function Home() {
   const [bets, setBets] = useState<Record<string, Bet>>({});
 
   const [isTruth, setIsTruth] = useState<boolean | null>(null);
-  const [winner, setWinner] = useState("");
+  const [winners, setWinners] = useState<string[]>([]);
+  const [gameEndReason, setGameEndReason] = useState("");
   const [specialEvent, setSpecialEvent] = useState("");
-  const [resultChanges, setResultChanges] = useState<Record<string, number>>({});
+  const [resultChanges, setResultChanges] = useState<Record<string, number>>(
+    {}
+  );
 
   const [showHistory, setShowHistory] = useState(false);
   const [showRules, setShowRules] = useState(false);
-  const [shoutHistory, setShoutHistory] = useState<Record<string, Record<string, string>>>({});
-  const [roundShepherds, setRoundShepherds] = useState<Record<string, string>>({});
+  const [showSettings, setShowSettings] = useState(false);
+
+  const [shoutHistory, setShoutHistory] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [roundShepherds, setRoundShepherds] = useState<
+    Record<string, string>
+  >({});
 
   const [specialRulesDisabled, setSpecialRulesDisabled] = useState(false);
-  const [forcedDistrustAmount, setForcedDistrustAmount] = useState<number | null>(null);
+  const [forcedDistrustAmount, setForcedDistrustAmount] = useState<
+    number | null
+  >(null);
   const [forcedDistrustShepherd, setForcedDistrustShepherd] = useState("");
 
-  const soundsRef = useRef<Record<string, HTMLAudioElement> | null>(null);
+  const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(0.7);
+  const [isCalculating, setIsCalculating] = useState(false);
+
+  const soundsRef = useRef<Record<SoundName, HTMLAudioElement> | null>(null);
 
   useEffect(() => {
     soundsRef.current = {
@@ -76,16 +94,19 @@ export default function Home() {
 
     Object.values(soundsRef.current).forEach((audio) => {
       audio.preload = "auto";
-      audio.volume = 0.7;
+      audio.volume = volume;
       audio.load();
     });
   }, []);
 
-  const playSound = (name: "click" | "card" | "bet" | "result" | "sheep") => {
+  const playSound = (name: SoundName) => {
+    if (muted) return;
+
     const audio = soundsRef.current?.[name];
     if (!audio) return;
 
     audio.currentTime = 0;
+    audio.volume = volume;
     audio.play().catch(() => {});
   };
 
@@ -115,7 +136,7 @@ export default function Home() {
         setTotalRounds(data.settings.totalRounds ?? 7);
         setShoutsPerTurn(data.settings.shoutsPerTurn ?? 3);
         setStartingSheep(data.settings.startingSheep ?? 7);
-        setDrawTimeLimit(data.settings.drawTimeLimit ?? 30);
+        setShoutTimeLimit(data.settings.shoutTimeLimit ?? 30);
         setBetTimeLimit(data.settings.betTimeLimit ?? 180);
       }
 
@@ -127,7 +148,6 @@ export default function Home() {
       setCurrentRound(data.currentRound || 1);
       setRoundInTurn(data.roundInTurn || 1);
       setSpecialEvent(data.specialEvent || "");
-      setWinner(data.winner || "");
       setBets(data.bets || {});
       setResultChanges(data.resultChanges || {});
       setShoutHistory(data.shoutHistory || {});
@@ -136,12 +156,18 @@ export default function Home() {
       setSpecialRulesDisabled(data.specialRulesDisabled || false);
       setForcedDistrustAmount(data.forcedDistrustAmount || null);
       setForcedDistrustShepherd(data.forcedDistrustShepherd || "");
+      setWinners(data.winners || []);
+      setGameEndReason(data.gameEndReason || "");
 
       if (data.phase) {
         setPhase(data.phase);
         setTimeoutHandled(false);
 
-        if (data.phase === "draw" || data.phase === "drawing" || data.phase === "shout") {
+        if (
+          data.phase === "draw" ||
+          data.phase === "drawing" ||
+          data.phase === "shout"
+        ) {
           setTrustAmount(0);
           setDistrustAmount(0);
         }
@@ -149,8 +175,11 @@ export default function Home() {
         setPhase("");
       }
 
-      if (typeof data.isTruth === "boolean") setIsTruth(data.isTruth);
-      else setIsTruth(null);
+      if (typeof data.isTruth === "boolean") {
+        setIsTruth(data.isTruth);
+      } else {
+        setIsTruth(null);
+      }
 
       if (data.status === "playing" || data.status === "finished") {
         setScreen("game");
@@ -167,7 +196,10 @@ export default function Home() {
     }
 
     const interval = setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((phaseEndsAt - Date.now()) / 1000));
+      const remaining = Math.max(
+        0,
+        Math.ceil((phaseEndsAt - Date.now()) / 1000)
+      );
       setTimeLeft(remaining);
     }, 300);
 
@@ -179,7 +211,7 @@ export default function Home() {
     if (!phaseEndsAt) return;
     if (timeLeft > 0) return;
     if (timeoutHandled) return;
-    if (phase !== "draw" && phase !== "betting") return;
+    if (phase !== "shout" && phase !== "betting") return;
 
     setTimeoutHandled(true);
     handleTimeout();
@@ -206,11 +238,13 @@ export default function Home() {
     setDistrustAmount(0);
     setBets({});
     setIsTruth(null);
-    setWinner("");
+    setWinners([]);
+    setGameEndReason("");
     setSpecialEvent("");
     setResultChanges({});
     setShowHistory(false);
     setShowRules(false);
+    setShowSettings(false);
     setShoutHistory({});
     setRoundShepherds({});
     setSpecialRulesDisabled(false);
@@ -231,6 +265,7 @@ export default function Home() {
       currentTurn: 0,
       roundInTurn: 1,
       phase: "lobby",
+      phaseEndsAt: null,
       hostName: "",
       players: {},
       playerOrder: [],
@@ -242,7 +277,7 @@ export default function Home() {
         totalRounds,
         shoutsPerTurn,
         startingSheep,
-        drawTimeLimit,
+        shoutTimeLimit,
         betTimeLimit,
       },
     });
@@ -288,7 +323,8 @@ export default function Home() {
     }
 
     const roomStartingSheep = room.settings?.startingSheep ?? startingSheep;
-    const isFirstPlayer = !room.players || Object.keys(room.players).length === 0;
+    const isFirstPlayer =
+      !room.players || Object.keys(room.players).length === 0;
 
     await set(ref(database, `rooms/${roomCode}/players/${name}`), {
       name,
@@ -333,7 +369,7 @@ export default function Home() {
       currentTurn: 0,
       roundInTurn: 1,
       phase: "draw",
-      phaseEndsAt: Date.now() + drawTimeLimit * 1000,
+      phaseEndsAt: null,
       shepherd: shuffledPlayers[0],
       playerOrder: shuffledPlayers,
       roundShepherds: {
@@ -345,7 +381,8 @@ export default function Home() {
       bets: null,
       isTruth: null,
       specialEvent: null,
-      winner: null,
+      winners: null,
+      gameEndReason: null,
       resultChanges: null,
       shoutHistory: null,
       specialRulesDisabled: false,
@@ -355,7 +392,7 @@ export default function Home() {
         totalRounds,
         shoutsPerTurn,
         startingSheep,
-        drawTimeLimit,
+        shoutTimeLimit,
         betTimeLimit,
       },
     });
@@ -378,7 +415,8 @@ export default function Home() {
       await update(ref(database, `rooms/${roomCode}`), {
         currentCard: card,
         phase: "shout",
-        phaseEndsAt: null,
+        phaseEndsAt:
+          shoutTimeLimit > 0 ? Date.now() + shoutTimeLimit * 1000 : null,
       });
     }, 1800);
   };
@@ -392,7 +430,8 @@ export default function Home() {
       shout: selectedShout,
       phase: "betting",
       bets: null,
-      phaseEndsAt: Date.now() + betTimeLimit * 1000,
+      phaseEndsAt:
+        betTimeLimit > 0 ? Date.now() + betTimeLimit * 1000 : null,
       [`shoutHistory/${shepherd}/${roundInTurn}`]: selectedShout,
     });
 
@@ -437,9 +476,7 @@ export default function Home() {
     });
   };
 
-  const calculateResult = async () => {
-    playSound("result");
-
+  const resolveBettingResult = async (timeoutMessage?: string) => {
     const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
     const room = roomSnapshot.val();
     if (!room) return;
@@ -451,7 +488,9 @@ export default function Home() {
     const roomPlayers = room.players || {};
     const roomBets = room.bets || {};
 
-    const updatedPlayers: Record<string, Player> = JSON.parse(JSON.stringify(roomPlayers));
+    const updatedPlayers: Record<string, Player> = JSON.parse(
+      JSON.stringify(roomPlayers)
+    );
 
     const beforeSheep: Record<string, number> = {};
     Object.keys(roomPlayers).forEach((name) => {
@@ -476,8 +515,13 @@ export default function Home() {
 
     const totalVotedResidents = validBets.length;
 
-    const trustCount = validBets.filter((bet: any) => bet.choice === "신뢰").length;
-    const distrustCount = validBets.filter((bet: any) => bet.choice === "불신").length;
+    const trustCount = validBets.filter(
+      (bet: any) => bet.choice === "신뢰"
+    ).length;
+
+    const distrustCount = validBets.filter(
+      (bet: any) => bet.choice === "불신"
+    ).length;
 
     let eventName = "";
     let skipBasic = false;
@@ -545,8 +589,11 @@ export default function Home() {
         const amount = bet.amount;
 
         if (truth) {
-          if (bet.choice === "신뢰") updatedPlayers[name].sheep += amount;
-          else updatedPlayers[name].sheep -= amount;
+          if (bet.choice === "신뢰") {
+            updatedPlayers[name].sheep += amount;
+          } else {
+            updatedPlayers[name].sheep -= amount;
+          }
         } else {
           if (bet.choice === "신뢰") {
             updatedPlayers[name].sheep -= amount;
@@ -575,7 +622,7 @@ export default function Home() {
       phase: "result",
       phaseEndsAt: null,
       isTruth: truth,
-      specialEvent: eventName,
+      specialEvent: eventName || timeoutMessage || "",
       resultChanges,
       forceNextShepherd: instantNextShepherd,
       specialRulesDisabled:
@@ -599,40 +646,46 @@ export default function Home() {
     }
   };
 
+  const calculateResult = async () => {
+    if (isCalculating) return;
+    if (playerName !== shepherd) return;
+
+    setIsCalculating(true);
+
+    try {
+      playSound("result");
+      await resolveBettingResult();
+    } finally {
+      setIsCalculating(false);
+    }
+  };
+
   const handleTimeout = async () => {
     const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
     const room = roomSnapshot.val();
     if (!room) return;
-    if (room.phase !== "draw" && room.phase !== "betting") return;
+    if (room.phase !== "shout" && room.phase !== "betting") return;
     if (room.phaseEndsAt && room.phaseEndsAt > Date.now()) return;
 
-    const roomPhase = room.phase;
+    if (room.phase === "betting") {
+      await resolveBettingResult("시간 초과: 미베팅 주민 -2");
+      return;
+    }
+
     const roomShepherd = room.shepherd;
     const roomPlayers = room.players || {};
-    const roomBets = room.bets || {};
 
-    const updatedPlayers: Record<string, Player> = JSON.parse(JSON.stringify(roomPlayers));
+    const updatedPlayers: Record<string, Player> = JSON.parse(
+      JSON.stringify(roomPlayers)
+    );
 
     const beforeSheep: Record<string, number> = {};
     Object.keys(roomPlayers).forEach((name) => {
       beforeSheep[name] = roomPlayers[name].sheep;
     });
 
-    if (roomPhase === "draw") {
-      if (updatedPlayers[roomShepherd]) {
-        updatedPlayers[roomShepherd].sheep -= 2;
-      }
-    }
-
-    if (roomPhase === "betting") {
-      Object.keys(roomPlayers).forEach((name) => {
-        if (name === roomShepherd) return;
-        if (roomPlayers[name].eliminated) return;
-
-        if (!roomBets[name]) {
-          updatedPlayers[name].sheep -= 2;
-        }
-      });
+    if (updatedPlayers[roomShepherd]) {
+      updatedPlayers[roomShepherd].sheep -= 2;
     }
 
     Object.keys(updatedPlayers).forEach((name) => {
@@ -652,12 +705,26 @@ export default function Home() {
       phase: "result",
       phaseEndsAt: null,
       isTruth: null,
-      specialEvent:
-        roomPhase === "draw"
-          ? "시간 초과: 양치기 -2"
-          : "시간 초과: 미베팅 주민 -2",
+      specialEvent: "시간 초과: 양치기 외침 실패 -2",
       resultChanges,
       forceNextShepherd: false,
+    });
+  };
+
+  const finishByScores = async (reason: string) => {
+    const finalPlayers = Object.values(playerScores);
+    const maxSheep = Math.max(...finalPlayers.map((player) => player.sheep));
+
+    const finalWinners = finalPlayers
+      .filter((player) => player.sheep === maxSheep)
+      .map((player) => player.name);
+
+    await update(ref(database, `rooms/${roomCode}`), {
+      status: "finished",
+      phase: "finished",
+      phaseEndsAt: null,
+      winners: finalWinners,
+      gameEndReason: reason,
     });
   };
 
@@ -676,29 +743,21 @@ export default function Home() {
         status: "finished",
         phase: "finished",
         phaseEndsAt: null,
-        winner: alivePlayers[0] || shepherd,
+        winners: alivePlayers.length === 1 ? [alivePlayers[0]] : [],
+        gameEndReason: "최후의 생존자",
       });
       return;
     }
 
     let nextShepherd = shepherd;
-    let nextRoundInTurn = forceNextShepherd ? shoutsPerTurn + 1 : roundInTurn + 1;
+    let nextRoundInTurn = forceNextShepherd
+      ? shoutsPerTurn + 1
+      : roundInTurn + 1;
     let nextCurrentRound = currentRound;
 
     if (nextRoundInTurn > shoutsPerTurn) {
       if (currentRound >= totalRounds) {
-        const finalPlayers = Object.values(playerScores);
-        const winnerPlayer = finalPlayers.reduce((top, player) =>
-          player.sheep > top.sheep ? player : top
-        );
-
-        await update(ref(database, `rooms/${roomCode}`), {
-          status: "finished",
-          phase: "finished",
-          phaseEndsAt: null,
-          winner: winnerPlayer.name,
-        });
-
+        await finishByScores("총 라운드 종료");
         return;
       }
 
@@ -721,7 +780,7 @@ export default function Home() {
       shout: null,
       bets: null,
       phase: "draw",
-      phaseEndsAt: Date.now() + drawTimeLimit * 1000,
+      phaseEndsAt: null,
       isTruth: null,
       specialEvent: null,
       resultChanges: null,
@@ -733,6 +792,77 @@ export default function Home() {
 
     setTrustAmount(0);
     setDistrustAmount(0);
+  };
+
+  const leaveGame = async () => {
+    playSound("click");
+
+    if (!roomCode || !playerName) {
+      resetToHome();
+      return;
+    }
+
+    const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
+    const room = roomSnapshot.val();
+
+    if (!room) {
+      resetToHome();
+      return;
+    }
+
+    const roomPlayers = room.players || {};
+    const order = room.playerOrder || [];
+
+    const nextHost =
+      room.hostName === playerName
+        ? Object.keys(roomPlayers).find((name) => name !== playerName)
+        : room.hostName;
+
+    if (room.status === "lobby") {
+      await update(ref(database, `rooms/${roomCode}`), {
+        [`players/${playerName}`]: null,
+        hostName: nextHost || "",
+      });
+
+      resetToHome();
+      return;
+    }
+
+    const alivePlayers = order.filter(
+      (name: string) => name !== playerName && !roomPlayers[name]?.eliminated
+    );
+
+    const updates: Record<string, any> = {
+      [`players/${playerName}/sheep`]: 0,
+      [`players/${playerName}/eliminated`]: true,
+      [`players/${playerName}/left`]: true,
+      hostName: nextHost || room.hostName,
+    };
+
+    if (room.shepherd === playerName) {
+      const nextShepherd = alivePlayers[0];
+
+      if (!nextShepherd) {
+        updates.status = "finished";
+        updates.phase = "finished";
+        updates.phaseEndsAt = null;
+        updates.winners = [];
+        updates.gameEndReason = "모든 플레이어 이탈";
+      } else {
+        updates.shepherd = nextShepherd;
+        updates.phase = "draw";
+        updates.currentCard = null;
+        updates.shout = null;
+        updates.bets = null;
+        updates.phaseEndsAt = null;
+        updates.roundInTurn = 1;
+        updates[`roundShepherds/${room.currentRound || 1}`] = nextShepherd;
+      }
+    }
+
+    await update(ref(database, `rooms/${roomCode}`), updates);
+
+    resetToHome();
   };
 
   const inputClass =
@@ -748,6 +878,95 @@ export default function Home() {
     return { emoji: "🐑", text: "평화", color: "text-blue-600" };
   };
 
+  const getSpecialEventDescription = (eventName: string) => {
+    if (eventName === "완벽한 진실의 성공") {
+      return "실제 카드와 외침이 일치했고, 모든 베팅 주민이 신뢰했습니다. 양 변화 없이 다음 양치기로 넘어갑니다.";
+    }
+
+    if (eventName === "완벽한 진실의 실패") {
+      return "실제 카드가 늑대였고 양치기가 진실을 외쳤지만, 모든 베팅 주민이 불신했습니다. 양치기는 모든 양을 잃습니다.";
+    }
+
+    if (eventName === "완벽한 거짓의 성공") {
+      return "실제 카드는 늑대였지만 양치기가 평화라고 거짓을 외쳤고, 모든 베팅 주민이 신뢰했습니다. 양치기가 베팅 양의 2배를 가져갑니다.";
+    }
+
+    if (eventName === "완벽한 거짓의 실패") {
+      return "실제 카드는 평화였지만 양치기가 늑대라고 거짓을 외쳤고, 모든 베팅 주민이 불신했습니다. 양치기는 양 1마리를 잃고 불신 2 고정 효과가 적용됩니다.";
+    }
+
+    return "";
+  };
+
+  const RulesCard = (
+    <div className="rounded-2xl bg-white text-green-950 p-4 mb-5 text-sm leading-relaxed text-left">
+      <h2 className="text-xl font-bold mb-4 text-center">룰 설명</h2>
+
+      <div className="mb-4">
+        <h3 className="font-bold text-lg mb-2">기본 진행</h3>
+        <p className="mb-2">
+          플레이어들은 순서대로 양치기가 되며 카드를 뽑고 외침을 합니다.
+        </p>
+        <p>
+          주민들은 외침을 믿을지(신뢰), 의심할지(불신) 양을 걸고
+          베팅합니다.
+        </p>
+      </div>
+
+      <div className="mb-4">
+        <h3 className="font-bold text-lg mb-2">제한시간 / 기권</h3>
+        <p className="mb-2">
+          양치기는 카드를 뽑은 뒤 정해진 시간 안에 “늑대가 왔다” 또는
+          “평화롭다”를 외쳐야 합니다. 제한시간 안에 외치지 못하면 양
+          2마리를 잃고 해당 외침이 종료됩니다.
+        </p>
+        <p>
+          주민이 정해진 시간 안에 베팅하지 못하면 기권 처리되어 양
+          2마리를 잃습니다. 단, 기권자는 특수 룰의 “모든 주민이
+          신뢰/불신” 판정에서는 제외됩니다.
+        </p>
+      </div>
+
+      <div>
+        <h3 className="font-bold text-lg mb-2">특수 룰</h3>
+
+        <div className="space-y-2">
+          <div className="rounded-xl bg-green-100 p-3">
+            <p className="font-bold">완벽한 진실의 성공</p>
+            <p>
+              진실 외침에 모든 베팅 주민이 신뢰하면 양 변화 없이 즉시 다음
+              양치기로 넘어갑니다.
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-red-100 p-3">
+            <p className="font-bold">완벽한 진실의 실패</p>
+            <p>
+              늑대를 진실로 외쳤는데 모든 베팅 주민이 불신하면 양치기는
+              모든 양을 잃고 즉시 다음 양치기로 넘어갑니다.
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-yellow-100 p-3">
+            <p className="font-bold">완벽한 거짓의 성공</p>
+            <p>
+              늑대를 뽑고 평화라고 거짓말했는데 모두 신뢰하면, 양치기는
+              신뢰에 걸린 양의 2배를 가져갑니다.
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-gray-100 p-3">
+            <p className="font-bold">완벽한 거짓의 실패</p>
+            <p>
+              평화를 뽑고 늑대라고 거짓말했는데 모두 불신하면, 양치기는 양
+              1마리를 잃고 해당 양치기 턴 동안 불신 베팅이 2로 고정됩니다.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   if (screen === "game") {
     const isShepherd = playerName === shepherd;
     const isEliminated = !!playerScores[playerName]?.eliminated;
@@ -757,11 +976,19 @@ export default function Home() {
 
     if (!isShepherd && !bets[playerName] && !isEliminated) {
       if (trustAmount > 0) {
-        previewBets[playerName] = { name: playerName, choice: "신뢰", amount: trustAmount };
+        previewBets[playerName] = {
+          name: playerName,
+          choice: "신뢰",
+          amount: trustAmount,
+        };
       }
 
       if (distrustAmount > 0) {
-        previewBets[playerName] = { name: playerName, choice: "불신", amount: distrustAmount };
+        previewBets[playerName] = {
+          name: playerName,
+          choice: "불신",
+          amount: distrustAmount,
+        };
       }
     }
 
@@ -785,8 +1012,12 @@ export default function Home() {
           <h1 className="text-4xl font-bold mb-4">게임 종료</h1>
 
           <div className="rounded-2xl bg-yellow-300 text-green-950 p-6 mb-6">
-            <p className="text-lg font-bold mb-2">우승자</p>
-            <h2 className="text-5xl font-bold">🏆 {winner}</h2>
+            <p className="text-lg font-bold mb-2">
+              {gameEndReason || "게임 종료"}
+            </p>
+            <h2 className="text-4xl font-bold">
+              🏆 {winners.length > 0 ? winners.join(", ") : "우승자 없음"}
+            </h2>
           </div>
 
           <div className="space-y-3">
@@ -795,8 +1026,13 @@ export default function Home() {
               if (!player) return null;
 
               return (
-                <div key={player.name} className="flex justify-between rounded-2xl bg-white/10 px-4 py-4">
-                  <span>{player.eliminated ? "💀" : "🐑"} {player.name}</span>
+                <div
+                  key={player.name}
+                  className="flex justify-between rounded-2xl bg-white/10 px-4 py-4"
+                >
+                  <span>
+                    {player.eliminated ? "💀" : "🐑"} {player.name}
+                  </span>
                   <span className="font-bold">{player.sheep}마리</span>
                 </div>
               );
@@ -815,7 +1051,17 @@ export default function Home() {
 
     return (
       <main className="min-h-screen bg-green-950 text-white px-6 py-6 pb-24">
-        <div className="flex justify-end gap-2 mb-3">
+        <div className="flex justify-end gap-2 mb-3 flex-wrap">
+          <button
+            onClick={() => {
+              playSound("click");
+              setShowSettings(!showSettings);
+            }}
+            className="rounded-xl bg-white/10 px-4 py-2 text-sm font-bold"
+          >
+            설정
+          </button>
+
           <button
             onClick={() => {
               playSound("click");
@@ -835,7 +1081,43 @@ export default function Home() {
           >
             {showHistory ? "기록 닫기" : "기록 보기"}
           </button>
+
+          <button
+            onClick={leaveGame}
+            className="rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white"
+          >
+            나가기
+          </button>
         </div>
+
+        {showSettings && (
+          <div className="rounded-2xl bg-white text-green-950 p-4 mb-5">
+            <h2 className="text-xl font-bold mb-4">설정</h2>
+
+            <button
+              onClick={() => setMuted(!muted)}
+              className="w-full rounded-xl bg-green-950 text-white py-3 font-bold mb-4"
+            >
+              {muted ? "소리 켜기" : "소리 끄기"}
+            </button>
+
+            <p className="font-bold mb-2">효과음 크기</p>
+
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={volume}
+              onChange={(e) => setVolume(Number(e.target.value))}
+              className="w-full"
+            />
+
+            <p className="text-center mt-2">{Math.round(volume * 100)}%</p>
+          </div>
+        )}
+
+        {showRules && RulesCard}
 
         {showHistory && (
           <div className="rounded-2xl bg-white text-green-950 p-4 mb-5 overflow-x-auto">
@@ -846,41 +1128,59 @@ export default function Home() {
                 <tr>
                   <th className="border border-green-900 p-2">라운드</th>
                   <th className="border border-green-900 p-2">양치기</th>
-                  {Array.from({ length: shoutsPerTurn }, (_, i) => i + 1).map((round) => (
-                    <th key={round} className="border border-green-900 p-2">
-                      {round}차
-                    </th>
-                  ))}
+                  {Array.from({ length: shoutsPerTurn }, (_, i) => i + 1).map(
+                    (round) => (
+                      <th key={round} className="border border-green-900 p-2">
+                        {round}차
+                      </th>
+                    )
+                  )}
                 </tr>
               </thead>
 
               <tbody>
-                {Array.from({ length: totalRounds }, (_, i) => i + 1).map((roundNumber) => {
-                  const playerNameForRound = roundShepherds[String(roundNumber)];
+                {Array.from({ length: totalRounds }, (_, i) => i + 1).map(
+                  (roundNumber) => {
+                    const playerNameForRound =
+                      roundShepherds[String(roundNumber)];
 
-                  return (
-                    <tr key={roundNumber}>
-                      <td className="border border-green-900 p-2 text-center">{roundNumber}</td>
-                      <td className="border border-green-900 p-2 font-bold">{playerNameForRound || "-"}</td>
-
-                      {Array.from({ length: shoutsPerTurn }, (_, i) => i + 1).map((shoutNumber) => (
-                        <td key={shoutNumber} className="border border-green-900 p-2 text-center">
-                          {playerNameForRound && shoutHistory[playerNameForRound]?.[shoutNumber]
-                            ? shoutHistory[playerNameForRound][shoutNumber] === "늑대"
-                              ? "늑대가 왔다"
-                              : "평화롭다"
-                            : "-"}
+                    return (
+                      <tr key={roundNumber}>
+                        <td className="border border-green-900 p-2 text-center">
+                          {roundNumber}
                         </td>
-                      ))}
-                    </tr>
-                  );
-                })}
+                        <td className="border border-green-900 p-2 font-bold">
+                          {playerNameForRound || "-"}
+                        </td>
+
+                        {Array.from(
+                          { length: shoutsPerTurn },
+                          (_, i) => i + 1
+                        ).map((shoutNumber) => (
+                          <td
+                            key={shoutNumber}
+                            className="border border-green-900 p-2 text-center"
+                          >
+                            {playerNameForRound &&
+                            shoutHistory[playerNameForRound]?.[shoutNumber]
+                              ? shoutHistory[playerNameForRound][
+                                  shoutNumber
+                                ] === "늑대"
+                                ? "늑대가 왔다"
+                                : "평화롭다"
+                              : "-"}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  }
+                )}
               </tbody>
             </table>
           </div>
         )}
 
-        {(phase === "draw" || phase === "betting") && (
+        {(phase === "shout" || phase === "betting") && phaseEndsAt && (
           <div className="rounded-2xl bg-red-500 text-white p-3 mb-4 text-center font-bold">
             남은 시간: {Math.floor(timeLeft / 60)}:
             {(timeLeft % 60).toString().padStart(2, "0")}
@@ -891,9 +1191,13 @@ export default function Home() {
           <div className="flex justify-between items-center mb-3">
             <div>
               <p className="text-green-200">플레이어 순서</p>
-              <p className="text-sm text-green-100">현재 라운드 {currentRound} / {totalRounds}</p>
+              <p className="text-sm text-green-100">
+                현재 라운드 {currentRound} / {totalRounds}
+              </p>
             </div>
-            <p className="text-sm text-green-100">외침 {roundInTurn} / {shoutsPerTurn}</p>
+            <p className="text-sm text-green-100">
+              외침 {roundInTurn} / {shoutsPerTurn}
+            </p>
           </div>
 
           {phase === "betting" && (
@@ -919,7 +1223,9 @@ export default function Home() {
                 <div
                   key={name}
                   className={`flex justify-between items-center rounded-2xl px-4 py-3 ${
-                    name === shepherd ? "bg-yellow-300 text-green-950" : "bg-white/10 text-white"
+                    name === shepherd
+                      ? "bg-yellow-300 text-green-950"
+                      : "bg-white/10 text-white"
                   }`}
                 >
                   <span className="font-bold">
@@ -936,12 +1242,15 @@ export default function Home() {
 
                         {phase === "betting" && previewBets[name] && (
                           <span className="text-xs text-green-200">
-                            {previewBets[name].choice} {previewBets[name].amount}
+                            {previewBets[name].choice}{" "}
+                            {previewBets[name].amount}
                           </span>
                         )}
 
                         {phase === "betting" && bets[name] && (
-                          <span className="text-xs text-yellow-300 font-bold">베팅 확정</span>
+                          <span className="text-xs text-yellow-300 font-bold">
+                            베팅 확정
+                          </span>
                         )}
                       </div>
                     )}
@@ -952,17 +1261,86 @@ export default function Home() {
           </div>
         </div>
 
+        {phase === "betting" && allResidentsBetted && (
+          <button
+            onClick={calculateResult}
+            disabled={!isShepherd || isCalculating}
+            className={`w-full rounded-2xl py-4 text-lg font-bold mb-6 ${
+              isShepherd
+                ? "bg-yellow-300 text-green-950"
+                : "bg-white/20 text-white/60"
+            }`}
+          >
+            {isCalculating
+              ? "계산 중..."
+              : isShepherd
+              ? "결과 보기"
+              : "양치기가 결과를 확인할 수 있습니다"}
+          </button>
+        )}
+
         {phase === "result" && (
           <div className="rounded-2xl bg-yellow-300 text-green-950 p-5 mb-6">
             <p className="text-lg font-bold mb-2">결과</p>
 
             <h2 className="text-3xl font-bold mb-5">
-              {isTruth === null ? "시간 초과 처리" : isTruth ? "진실이었습니다" : "거짓이었습니다"}
+              {isTruth === null
+                ? "시간 초과 처리"
+                : isTruth
+                ? "진실이었습니다"
+                : "거짓이었습니다"}
             </h2>
 
+            {isTruth !== null && (
+              <div className="rounded-xl bg-white/60 p-4 mb-4">
+                <p className="font-bold mb-2">이번 외침 정보</p>
+
+                <p>
+                  실제 카드:{" "}
+                  <span
+                    className={
+                      currentCard === "늑대"
+                        ? "text-red-700 font-bold"
+                        : "text-blue-700 font-bold"
+                    }
+                  >
+                    {currentCard === "늑대" ? "🐺 늑대" : "🐑 평화"}
+                  </span>
+                </p>
+
+                <p>
+                  양치기의 외침:{" "}
+                  <span className="font-bold">
+                    {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
+                  </span>
+                </p>
+
+                <p>
+                  판정:{" "}
+                  <span
+                    className={
+                      isTruth
+                        ? "text-blue-700 font-bold"
+                        : "text-red-700 font-bold"
+                    }
+                  >
+                    {isTruth ? "진실" : "거짓"}
+                  </span>
+                </p>
+              </div>
+            )}
+
             {specialEvent && (
-              <div className="rounded-2xl bg-red-500 text-white p-4 mb-5 text-center text-xl font-bold">
-                {specialEvent}
+              <div className="rounded-2xl bg-red-500 text-white p-4 mb-5">
+                <p className="text-center text-xl font-bold mb-2">
+                  {specialEvent}
+                </p>
+
+                {getSpecialEventDescription(specialEvent) && (
+                  <p className="text-sm leading-relaxed text-red-50">
+                    {getSpecialEventDescription(specialEvent)}
+                  </p>
+                )}
               </div>
             )}
 
@@ -973,8 +1351,13 @@ export default function Home() {
                 const change = resultChanges[player.name];
 
                 return (
-                  <div key={player.name} className="flex justify-between rounded-xl bg-white/60 px-4 py-3">
-                    <span>{player.eliminated ? "💀" : "🐑"} {player.name}</span>
+                  <div
+                    key={player.name}
+                    className="flex justify-between rounded-xl bg-white/60 px-4 py-3"
+                  >
+                    <span>
+                      {player.eliminated ? "💀" : "🐑"} {player.name}
+                    </span>
                     <span className="font-bold">
                       {player.sheep}마리
                       {change !== undefined && (
@@ -1011,7 +1394,8 @@ export default function Home() {
           <div className="rounded-2xl bg-white/10 p-5 text-center">
             <h2 className="text-2xl font-bold mb-3">관전 중</h2>
             <p className="text-green-100">
-              양이 0마리가 되어 탈락했습니다. 게임 진행은 계속 볼 수 있습니다.
+              양이 0마리가 되어 탈락했습니다. 게임 진행은 계속 볼 수
+              있습니다.
             </p>
           </div>
         ) : isShepherd ? (
@@ -1035,8 +1419,14 @@ export default function Home() {
             ) : (
               <div className="rounded-2xl bg-white text-green-950 p-6 text-center">
                 <p className="text-lg mb-2">뽑은 카드</p>
-                <div className="text-7xl mb-3">{getCardStyle(currentCard).emoji}</div>
-                <div className={`text-5xl font-bold ${getCardStyle(currentCard).color}`}>
+                <div className="text-7xl mb-3">
+                  {getCardStyle(currentCard).emoji}
+                </div>
+                <div
+                  className={`text-5xl font-bold ${
+                    getCardStyle(currentCard).color
+                  }`}
+                >
                   {getCardStyle(currentCard).text}
                 </div>
 
@@ -1066,18 +1456,11 @@ export default function Home() {
               </div>
             )}
 
-            {phase === "betting" && allResidentsBetted && (
-              <button
-                onClick={calculateResult}
-                className="w-full rounded-2xl bg-yellow-300 text-green-950 py-4 text-lg font-bold mt-6"
-              >
-                결과 보기
-              </button>
-            )}
-
             {phase === "betting" && !allResidentsBetted && (
               <div className="rounded-2xl bg-white/10 p-4 mt-6 text-center">
-                <p className="text-green-100">주민들의 베팅을 기다리는 중입니다.</p>
+                <p className="text-green-100">
+                  주민들의 베팅을 기다리는 중입니다.
+                </p>
                 <p className="text-sm text-green-200 mt-2">
                   {Object.keys(bets).length} / {activeResidents.length}명 완료
                 </p>
@@ -1090,7 +1473,9 @@ export default function Home() {
 
             {phase === "drawing" ? (
               <div className="rounded-2xl bg-white/10 p-6 text-center animate-pulse">
-                <p className="text-green-100 mb-4">양치기가 카드를 뽑는 중...</p>
+                <p className="text-green-100 mb-4">
+                  양치기가 카드를 뽑는 중...
+                </p>
                 <div className="text-6xl">🎴</div>
               </div>
             ) : !shout ? (
@@ -1101,15 +1486,6 @@ export default function Home() {
                 <p className="text-2xl font-bold">
                   {bets[playerName].choice} / 양 {bets[playerName].amount}마리
                 </p>
-
-                {allResidentsBetted && (
-                  <button
-                    onClick={calculateResult}
-                    className="w-full rounded-2xl bg-yellow-300 text-green-950 py-4 text-lg font-bold mt-6"
-                  >
-                    결과 보기
-                  </button>
-                )}
               </div>
             ) : (
               <div>
@@ -1120,16 +1496,18 @@ export default function Home() {
                   </h2>
                 </div>
 
-                {specialRulesDisabled && forcedDistrustShepherd === shepherd && (
-                  <div className="rounded-2xl bg-red-500 text-white p-4 mb-4 text-center font-bold">
-                    특수룰 효과: 불신 베팅 2마리 고정
-                  </div>
-                )}
+                {specialRulesDisabled &&
+                  forcedDistrustShepherd === shepherd && (
+                    <div className="rounded-2xl bg-red-500 text-white p-4 mb-4 text-center font-bold">
+                      특수룰 효과: 불신 베팅 2마리 고정
+                    </div>
+                  )}
 
                 <div className="grid grid-cols-2 gap-4 mb-6">
                   <div
                     className={`rounded-2xl p-4 text-center ${
-                      specialRulesDisabled && forcedDistrustShepherd === shepherd
+                      specialRulesDisabled &&
+                      forcedDistrustShepherd === shepherd
                         ? "bg-gray-400 text-gray-700"
                         : "bg-white text-green-950"
                     }`}
@@ -1139,7 +1517,11 @@ export default function Home() {
                     <button
                       onClick={() => {
                         playSound("sheep");
-                        if (specialRulesDisabled && forcedDistrustShepherd === shepherd) return;
+                        if (
+                          specialRulesDisabled &&
+                          forcedDistrustShepherd === shepherd
+                        )
+                          return;
                         if (trustAmount >= maxBet) return;
                         setDistrustAmount(0);
                         setTrustAmount(trustAmount + 1);
@@ -1149,12 +1531,18 @@ export default function Home() {
                       +
                     </button>
 
-                    <div className="text-4xl font-bold my-4">{trustAmount}</div>
+                    <div className="text-4xl font-bold my-4">
+                      {trustAmount}
+                    </div>
 
                     <button
                       onClick={() => {
                         playSound("sheep");
-                        if (specialRulesDisabled && forcedDistrustShepherd === shepherd) return;
+                        if (
+                          specialRulesDisabled &&
+                          forcedDistrustShepherd === shepherd
+                        )
+                          return;
                         setTrustAmount(Math.max(0, trustAmount - 1));
                       }}
                       className="w-full rounded-xl bg-green-950 text-white py-2 font-bold"
@@ -1179,7 +1567,8 @@ export default function Home() {
                     </button>
 
                     <div className="text-4xl font-bold my-4">
-                      {specialRulesDisabled && forcedDistrustShepherd === shepherd
+                      {specialRulesDisabled &&
+                      forcedDistrustShepherd === shepherd
                         ? Math.min(forcedDistrustAmount || 2, mySheep)
                         : distrustAmount}
                     </div>
@@ -1187,7 +1576,11 @@ export default function Home() {
                     <button
                       onClick={() => {
                         playSound("sheep");
-                        if (specialRulesDisabled && forcedDistrustShepherd === shepherd) return;
+                        if (
+                          specialRulesDisabled &&
+                          forcedDistrustShepherd === shepherd
+                        )
+                          return;
                         setDistrustAmount(Math.max(0, distrustAmount - 1));
                       }}
                       className="w-full rounded-xl bg-white text-green-950 py-2 font-bold"
@@ -1319,22 +1712,24 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl bg-white/10 p-4">
-            <p className="font-bold mb-3">카드 뽑기 제한시간(초)</p>
+            <p className="font-bold mb-3">외침 제한시간(초)</p>
             <div className="flex items-center justify-between">
               <button
                 onClick={() => {
                   playSound("click");
-                  setDrawTimeLimit(Math.max(5, drawTimeLimit - 5));
+                  setShoutTimeLimit(Math.max(0, shoutTimeLimit - 5));
                 }}
                 className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
               >
                 -
               </button>
-              <span className="text-3xl font-bold">{drawTimeLimit}</span>
+              <span className="text-3xl font-bold">
+                {shoutTimeLimit === 0 ? "없음" : shoutTimeLimit}
+              </span>
               <button
                 onClick={() => {
                   playSound("click");
-                  setDrawTimeLimit(drawTimeLimit + 5);
+                  setShoutTimeLimit(shoutTimeLimit + 5);
                 }}
                 className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
               >
@@ -1349,13 +1744,15 @@ export default function Home() {
               <button
                 onClick={() => {
                   playSound("click");
-                  setBetTimeLimit(Math.max(10, betTimeLimit - 10));
+                  setBetTimeLimit(Math.max(0, betTimeLimit - 10));
                 }}
                 className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
               >
                 -
               </button>
-              <span className="text-3xl font-bold">{betTimeLimit}</span>
+              <span className="text-3xl font-bold">
+                {betTimeLimit === 0 ? "없음" : betTimeLimit}
+              </span>
               <button
                 onClick={() => {
                   playSound("click");
@@ -1435,7 +1832,7 @@ export default function Home() {
           value={playerName}
           onChange={(e) => setPlayerName(e.target.value)}
           className={inputClass}
-          placeholder="예: 용하"
+          placeholder="이름 입력"
         />
 
         <button
@@ -1468,25 +1865,37 @@ export default function Home() {
 
         <div className="space-y-3 mb-8">
           {players.map((player) => (
-            <div key={player} className="rounded-2xl bg-white/10 px-4 py-4 text-lg">
+            <div
+              key={player}
+              className="rounded-2xl bg-white/10 px-4 py-4 text-lg"
+            >
               🐑 {player}
               {player === hostName ? " 👑" : ""}
             </div>
           ))}
         </div>
 
-        {playerName === hostName ? (
+        <div className="flex flex-col gap-3">
+          {playerName === hostName ? (
+            <button
+              onClick={startGame}
+              className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold"
+            >
+              게임 시작
+            </button>
+          ) : (
+            <p className="text-green-100 text-center">
+              방장이 게임을 시작할 때까지 기다리세요.
+            </p>
+          )}
+
           <button
-            onClick={startGame}
-            className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold"
+            onClick={leaveGame}
+            className="w-full rounded-2xl bg-red-500 text-white py-4 text-lg font-bold"
           >
-            게임 시작
+            나가기
           </button>
-        ) : (
-          <p className="text-green-100 text-center">
-            방장이 게임을 시작할 때까지 기다리세요.
-          </p>
-        )}
+        </div>
       </main>
     );
   }
@@ -1514,51 +1923,7 @@ export default function Home() {
           </button>
         </div>
 
-        {showRules && (
-          <div className="rounded-2xl bg-white text-green-950 p-4 mb-6 text-left text-sm leading-relaxed">
-            <h2 className="text-xl font-bold mb-4 text-center">룰 설명</h2>
-
-            <div className="mb-4">
-              <h3 className="font-bold text-lg mb-2">기본 진행</h3>
-              <p className="mb-2">플레이어들은 순서대로 양치기가 되며 카드를 뽑고 외침을 합니다.</p>
-              <p>주민들은 외침을 믿을지(신뢰), 의심할지(불신) 양을 걸고 베팅합니다.</p>
-            </div>
-
-            <div className="mb-4">
-              <h3 className="font-bold text-lg mb-2">제한시간 / 기권</h3>
-              <p>
-                정해진 시간 안에 베팅하지 못한 주민은 양 2마리를 잃습니다.
-                단, 기권자는 특수 룰의 “모든 주민” 판정에서 제외됩니다.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="font-bold text-lg mb-2">특수 룰</h3>
-
-              <div className="space-y-2">
-                <div className="rounded-xl bg-green-100 p-3">
-                  <p className="font-bold">완벽한 진실의 성공</p>
-                  <p>진실 외침에 모든 베팅 주민이 신뢰하면 양 변화 없이 즉시 다음 양치기로 넘어갑니다.</p>
-                </div>
-
-                <div className="rounded-xl bg-red-100 p-3">
-                  <p className="font-bold">완벽한 진실의 실패</p>
-                  <p>늑대를 진실로 외쳤는데 모든 베팅 주민이 불신하면 양치기는 모든 양을 잃습니다.</p>
-                </div>
-
-                <div className="rounded-xl bg-yellow-100 p-3">
-                  <p className="font-bold">완벽한 거짓의 성공</p>
-                  <p>늑대를 뽑고 평화라고 거짓말했는데 모두 신뢰하면, 양치기는 신뢰에 걸린 양의 2배를 가져갑니다.</p>
-                </div>
-
-                <div className="rounded-xl bg-gray-100 p-3">
-                  <p className="font-bold">완벽한 거짓의 실패</p>
-                  <p>평화를 뽑고 늑대라고 거짓말했는데 모두 불신하면, 양치기는 양 1마리를 잃고 불신 베팅이 2로 고정됩니다.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {showRules && RulesCard}
 
         <div className="flex flex-col gap-4">
           <button
@@ -1580,6 +1945,34 @@ export default function Home() {
           >
             방 참가하기
           </button>
+        </div>
+
+        <div className="mt-6 rounded-2xl bg-white/10 p-4 text-sm text-green-100 leading-relaxed">
+          <p className="mb-3">
+            이 게임은 우왁굳 콘텐츠에서 소개된 양치기 소년 게임 룰을
+            바탕으로 제작되었습니다. 원 룰 정리와 아이디어에 도움을 준
+            김눈눈님과 우왁굳님께 감사드립니다.
+          </p>
+
+          <div className="flex flex-col gap-3">
+            <a
+              href="https://cafe.naver.com/f-e/cafes/27842958/articles/18127919?boardtype=L&referrerAllArticles=true&inCafeSearch=true&query=%EC%96%91%EC%B9%98%EA%B8%B0%20%EB%A3%B0&art=aW50ZXJuYWwtY2FmZS1hcnRpY2xlLXJlYWQtaW5DYWZlLXNlYXJjaC1saXN0.eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJjYWZlVHlwZSI6IkNBRkVfSUQiLCJhcnRpY2xlSWQiOjE4MTI3OTE5LCJpc3N1ZWRBdCI6MTc3ODk2MTE5NTcyNywiY2FmZUlkIjoyNzg0Mjk1OH0.EUtJL8ZBNvshvNu4PdHrwxOgE3BA2p4oMKhbCGdRU4I&page=2"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-xl bg-white text-green-950 px-4 py-3 font-bold text-center"
+            >
+              출처 보기
+            </a>
+
+            <a
+              href="https://www.youtube.com/watch?v=CFxYT9f1jic"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-xl bg-red-500 text-white px-4 py-3 font-bold text-center"
+            >
+              룰 영상 보기
+            </a>
+          </div>
         </div>
       </div>
     </main>
