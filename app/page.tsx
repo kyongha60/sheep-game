@@ -10,7 +10,6 @@ type Player = {
   name: string;
   sheep: number;
   eliminated: boolean;
-  left?: boolean;
 };
 
 type Bet = {
@@ -51,6 +50,7 @@ export default function Home() {
   const [trustAmount, setTrustAmount] = useState(0);
   const [distrustAmount, setDistrustAmount] = useState(0);
   const [bets, setBets] = useState<Record<string, Bet>>({});
+  const [liveBets, setLiveBets] = useState<Record<string, Bet>>({});
 
   const [isTruth, setIsTruth] = useState<boolean | null>(null);
   const [winners, setWinners] = useState<string[]>([]);
@@ -149,6 +149,7 @@ export default function Home() {
       setRoundInTurn(data.roundInTurn || 1);
       setSpecialEvent(data.specialEvent || "");
       setBets(data.bets || {});
+      setLiveBets(data.liveBets || {});
       setResultChanges(data.resultChanges || {});
       setShoutHistory(data.shoutHistory || {});
       setRoundShepherds(data.roundShepherds || {});
@@ -237,6 +238,7 @@ export default function Home() {
     setTrustAmount(0);
     setDistrustAmount(0);
     setBets({});
+    setLiveBets({});
     setIsTruth(null);
     setWinners([]);
     setGameEndReason("");
@@ -379,6 +381,7 @@ export default function Home() {
       currentCard: null,
       shout: null,
       bets: null,
+      liveBets: null,
       isTruth: null,
       specialEvent: null,
       winners: null,
@@ -430,6 +433,7 @@ export default function Home() {
       shout: selectedShout,
       phase: "betting",
       bets: null,
+      liveBets: null,
       phaseEndsAt:
         betTimeLimit > 0 ? Date.now() + betTimeLimit * 1000 : null,
       [`shoutHistory/${shepherd}/${roundInTurn}`]: selectedShout,
@@ -474,6 +478,8 @@ export default function Home() {
       choice,
       amount: safeAmount,
     });
+
+    await set(ref(database, `rooms/${roomCode}/liveBets/${playerName}`), null);
   };
 
   const resolveBettingResult = async (timeoutMessage?: string) => {
@@ -779,6 +785,7 @@ export default function Home() {
       currentCard: null,
       shout: null,
       bets: null,
+      liveBets: null,
       phase: "draw",
       phaseEndsAt: null,
       isTruth: null,
@@ -794,77 +801,6 @@ export default function Home() {
     setDistrustAmount(0);
   };
 
-  const leaveGame = async () => {
-    playSound("click");
-
-    if (!roomCode || !playerName) {
-      resetToHome();
-      return;
-    }
-
-    const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
-    const room = roomSnapshot.val();
-
-    if (!room) {
-      resetToHome();
-      return;
-    }
-
-    const roomPlayers = room.players || {};
-    const order = room.playerOrder || [];
-
-    const nextHost =
-      room.hostName === playerName
-        ? Object.keys(roomPlayers).find((name) => name !== playerName)
-        : room.hostName;
-
-    if (room.status === "lobby") {
-      await update(ref(database, `rooms/${roomCode}`), {
-        [`players/${playerName}`]: null,
-        hostName: nextHost || "",
-      });
-
-      resetToHome();
-      return;
-    }
-
-    const alivePlayers = order.filter(
-      (name: string) => name !== playerName && !roomPlayers[name]?.eliminated
-    );
-
-    const updates: Record<string, any> = {
-      [`players/${playerName}/sheep`]: 0,
-      [`players/${playerName}/eliminated`]: true,
-      [`players/${playerName}/left`]: true,
-      hostName: nextHost || room.hostName,
-    };
-
-    if (room.shepherd === playerName) {
-      const nextShepherd = alivePlayers[0];
-
-      if (!nextShepherd) {
-        updates.status = "finished";
-        updates.phase = "finished";
-        updates.phaseEndsAt = null;
-        updates.winners = [];
-        updates.gameEndReason = "모든 플레이어 이탈";
-      } else {
-        updates.shepherd = nextShepherd;
-        updates.phase = "draw";
-        updates.currentCard = null;
-        updates.shout = null;
-        updates.bets = null;
-        updates.phaseEndsAt = null;
-        updates.roundInTurn = 1;
-        updates[`roundShepherds/${room.currentRound || 1}`] = nextShepherd;
-      }
-    }
-
-    await update(ref(database, `rooms/${roomCode}`), updates);
-
-    resetToHome();
-  };
-
   const inputClass =
     "w-full rounded-2xl bg-white border border-white/30 px-4 py-4 text-black placeholder-gray-500 text-lg mb-4";
 
@@ -872,10 +808,10 @@ export default function Home() {
 
   const getCardStyle = (card: string) => {
     if (card === "늑대") {
-      return { emoji: "🐺", text: "늑대", color: "text-red-600" };
+      return { emoji: "🐺", text: "늑대", color: "text-red-500" };
     }
 
-    return { emoji: "🐑", text: "평화", color: "text-blue-600" };
+    return { emoji: "🐑", text: "평화", color: "text-blue-400" };
   };
 
   const getSpecialEventDescription = (eventName: string) => {
@@ -898,6 +834,33 @@ export default function Home() {
     return "";
   };
 
+  const SettingsCard = (
+    <div className="rounded-2xl bg-white text-green-950 p-4 mb-5 text-left">
+      <h2 className="text-xl font-bold mb-4 text-center">설정</h2>
+
+      <button
+        onClick={() => setMuted(!muted)}
+        className="w-full rounded-xl bg-green-950 text-white py-3 font-bold mb-4"
+      >
+        {muted ? "소리 켜기" : "소리 끄기"}
+      </button>
+
+      <p className="font-bold mb-2">효과음 크기</p>
+
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.1"
+        value={volume}
+        onChange={(e) => setVolume(Number(e.target.value))}
+        className="w-full"
+      />
+
+      <p className="text-center mt-2">{Math.round(volume * 100)}%</p>
+    </div>
+  );
+
   const RulesCard = (
     <div className="rounded-2xl bg-white text-green-950 p-4 mb-5 text-sm leading-relaxed text-left">
       <h2 className="text-xl font-bold mb-4 text-center">룰 설명</h2>
@@ -908,8 +871,8 @@ export default function Home() {
           플레이어들은 순서대로 양치기가 되며 카드를 뽑고 외침을 합니다.
         </p>
         <p>
-          주민들은 외침을 믿을지(신뢰), 의심할지(불신) 양을 걸고
-          베팅합니다.
+          주민들은 외침을 믿을지(<span className="text-blue-700 font-bold">신뢰</span>), 의심할지(
+          <span className="text-red-700 font-bold">불신</span>) 양을 걸고 베팅합니다.
         </p>
       </div>
 
@@ -972,25 +935,10 @@ export default function Home() {
     const isEliminated = !!playerScores[playerName]?.eliminated;
     const maxBet = Math.max(1, Math.min(5, mySheep));
 
-    const previewBets: Record<string, Bet> = { ...bets };
-
-    if (!isShepherd && !bets[playerName] && !isEliminated) {
-      if (trustAmount > 0) {
-        previewBets[playerName] = {
-          name: playerName,
-          choice: "신뢰",
-          amount: trustAmount,
-        };
-      }
-
-      if (distrustAmount > 0) {
-        previewBets[playerName] = {
-          name: playerName,
-          choice: "불신",
-          amount: distrustAmount,
-        };
-      }
-    }
+    const previewBets: Record<string, Bet> = {
+      ...liveBets,
+      ...bets,
+    };
 
     const totalTrust = Object.values(previewBets)
       .filter((bet: any) => bet.choice === "신뢰")
@@ -1081,42 +1029,9 @@ export default function Home() {
           >
             {showHistory ? "기록 닫기" : "기록 보기"}
           </button>
-
-          <button
-            onClick={leaveGame}
-            className="rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white"
-          >
-            나가기
-          </button>
         </div>
 
-        {showSettings && (
-          <div className="rounded-2xl bg-white text-green-950 p-4 mb-5">
-            <h2 className="text-xl font-bold mb-4">설정</h2>
-
-            <button
-              onClick={() => setMuted(!muted)}
-              className="w-full rounded-xl bg-green-950 text-white py-3 font-bold mb-4"
-            >
-              {muted ? "소리 켜기" : "소리 끄기"}
-            </button>
-
-            <p className="font-bold mb-2">효과음 크기</p>
-
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.1"
-              value={volume}
-              onChange={(e) => setVolume(Number(e.target.value))}
-              className="w-full"
-            />
-
-            <p className="text-center mt-2">{Math.round(volume * 100)}%</p>
-          </div>
-        )}
-
+        {showSettings && SettingsCard}
         {showRules && RulesCard}
 
         {showHistory && (
@@ -1204,12 +1119,16 @@ export default function Home() {
             <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="rounded-xl bg-white text-green-950 p-3 text-center">
                 <p className="text-sm">전체 신뢰</p>
-                <p className="text-2xl font-bold">🐑 {totalTrust}</p>
+                <p className="text-2xl font-bold text-blue-700">
+                  🐑 {totalTrust}
+                </p>
               </div>
 
               <div className="rounded-xl bg-white/10 text-white p-3 text-center">
                 <p className="text-sm">전체 불신</p>
-                <p className="text-2xl font-bold">🐑 {totalDistrust}</p>
+                <p className="text-2xl font-bold text-red-400">
+                  🐑 {totalDistrust}
+                </p>
               </div>
             </div>
           )}
@@ -1241,7 +1160,13 @@ export default function Home() {
                         <span>🐑 {player.sheep}</span>
 
                         {phase === "betting" && previewBets[name] && (
-                          <span className="text-xs text-green-200">
+                          <span
+                            className={
+                              previewBets[name].choice === "불신"
+                                ? "text-xs text-red-400 font-bold"
+                                : "text-xs text-blue-300 font-bold"
+                            }
+                          >
                             {previewBets[name].choice}{" "}
                             {previewBets[name].amount}
                           </span>
@@ -1310,7 +1235,13 @@ export default function Home() {
 
                 <p>
                   양치기의 외침:{" "}
-                  <span className="font-bold">
+                  <span
+                    className={
+                      shout === "늑대"
+                        ? "text-red-700 font-bold"
+                        : "text-blue-700 font-bold"
+                    }
+                  >
                     {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
                   </span>
                 </p>
@@ -1358,22 +1289,38 @@ export default function Home() {
                     <span>
                       {player.eliminated ? "💀" : "🐑"} {player.name}
                     </span>
-                    <span className="font-bold">
-                      {player.sheep}마리
-                      {change !== undefined && (
+
+                    <div className="flex flex-col items-end">
+                      <span className="font-bold">
+                        {player.sheep}마리
+                        {change !== undefined && (
+                          <span
+                            className={
+                              change > 0
+                                ? "ml-2 text-blue-700"
+                                : change < 0
+                                ? "ml-2 text-red-700"
+                                : "ml-2 text-gray-700"
+                            }
+                          >
+                            {change > 0 ? `+${change}` : change}
+                          </span>
+                        )}
+                      </span>
+
+                      {bets[player.name] && (
                         <span
-                          className={
-                            change > 0
-                              ? "ml-2 text-blue-700"
-                              : change < 0
-                              ? "ml-2 text-red-700"
-                              : "ml-2 text-gray-700"
-                          }
+                          className={`text-xs mt-1 font-bold ${
+                            bets[player.name].choice === "불신"
+                              ? "text-red-700"
+                              : "text-blue-700"
+                          }`}
                         >
-                          {change > 0 ? `+${change}` : change}
+                          {bets[player.name].choice}{" "}
+                          {bets[player.name].amount}
                         </span>
                       )}
-                    </span>
+                    </div>
                   </div>
                 );
               })}
@@ -1407,7 +1354,7 @@ export default function Home() {
             {phase === "drawing" ? (
               <div className="rounded-2xl bg-white text-green-950 p-8 text-center animate-pulse">
                 <p className="text-lg mb-4">카드를 뽑는 중...</p>
-                <div className="text-6xl">🎴</div>
+                <div className="text-6xl">🃏</div>
               </div>
             ) : !currentCard ? (
               <button
@@ -1434,14 +1381,14 @@ export default function Home() {
                   <div className="mt-6 flex flex-col gap-3">
                     <button
                       onClick={() => makeShout("늑대")}
-                      className="w-full rounded-2xl bg-green-950 text-white py-4 text-lg font-bold"
+                      className="w-full rounded-2xl bg-green-950 text-red-400 py-4 text-lg font-bold"
                     >
                       늑대가 왔다!
                     </button>
 
                     <button
                       onClick={() => makeShout("평화")}
-                      className="w-full rounded-2xl border border-green-950 py-4 text-lg font-bold"
+                      className="w-full rounded-2xl border border-green-950 py-4 text-lg font-bold text-blue-600"
                     >
                       평화롭다
                     </button>
@@ -1450,7 +1397,14 @@ export default function Home() {
 
                 {shout && (
                   <p className="mt-6 text-2xl font-bold">
-                    외침: {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
+                    외침:{" "}
+                    <span
+                      className={
+                        shout === "늑대" ? "text-red-600" : "text-blue-600"
+                      }
+                    >
+                      {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
+                    </span>
                   </p>
                 )}
               </div>
@@ -1476,14 +1430,20 @@ export default function Home() {
                 <p className="text-green-100 mb-4">
                   양치기가 카드를 뽑는 중...
                 </p>
-                <div className="text-6xl">🎴</div>
+                <div className="text-6xl">🃏</div>
               </div>
             ) : !shout ? (
               <p className="text-green-100">양치기의 외침을 기다리세요.</p>
             ) : bets[playerName] ? (
               <div className="rounded-2xl bg-white/10 p-5">
                 <p className="text-green-200 mb-2">베팅 완료</p>
-                <p className="text-2xl font-bold">
+                <p
+                  className={`text-2xl font-bold ${
+                    bets[playerName].choice === "불신"
+                      ? "text-red-400"
+                      : "text-blue-300"
+                  }`}
+                >
                   {bets[playerName].choice} / 양 {bets[playerName].amount}마리
                 </p>
               </div>
@@ -1491,7 +1451,11 @@ export default function Home() {
               <div>
                 <div className="rounded-2xl bg-white/10 p-5 mb-6">
                   <p className="text-green-200 mb-2">양치기의 외침</p>
-                  <h2 className="text-4xl font-bold">
+                  <h2
+                    className={`text-4xl font-bold ${
+                      shout === "늑대" ? "text-red-400" : "text-blue-300"
+                    }`}
+                  >
                     {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
                   </h2>
                 </div>
@@ -1512,10 +1476,10 @@ export default function Home() {
                         : "bg-white text-green-950"
                     }`}
                   >
-                    <p className="font-bold mb-3">신뢰</p>
+                    <p className="font-bold mb-3 text-blue-700">신뢰</p>
 
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         playSound("sheep");
                         if (
                           specialRulesDisabled &&
@@ -1523,8 +1487,23 @@ export default function Home() {
                         )
                           return;
                         if (trustAmount >= maxBet) return;
+
+                        const nextAmount = trustAmount + 1;
+
                         setDistrustAmount(0);
-                        setTrustAmount(trustAmount + 1);
+                        setTrustAmount(nextAmount);
+
+                        await set(
+                          ref(
+                            database,
+                            `rooms/${roomCode}/liveBets/${playerName}`
+                          ),
+                          {
+                            name: playerName,
+                            choice: "신뢰",
+                            amount: nextAmount,
+                          }
+                        );
                       }}
                       className="w-full rounded-xl bg-green-950 text-white py-2 font-bold"
                     >
@@ -1536,14 +1515,30 @@ export default function Home() {
                     </div>
 
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         playSound("sheep");
                         if (
                           specialRulesDisabled &&
                           forcedDistrustShepherd === shepherd
                         )
                           return;
-                        setTrustAmount(Math.max(0, trustAmount - 1));
+
+                        const nextAmount = Math.max(0, trustAmount - 1);
+                        setTrustAmount(nextAmount);
+
+                        await set(
+                          ref(
+                            database,
+                            `rooms/${roomCode}/liveBets/${playerName}`
+                          ),
+                          nextAmount > 0
+                            ? {
+                                name: playerName,
+                                choice: "신뢰",
+                                amount: nextAmount,
+                              }
+                            : null
+                        );
                       }}
                       className="w-full rounded-xl bg-green-950 text-white py-2 font-bold"
                     >
@@ -1552,14 +1547,29 @@ export default function Home() {
                   </div>
 
                   <div className="rounded-2xl bg-white/10 text-white p-4 text-center">
-                    <p className="font-bold mb-3">불신</p>
+                    <p className="font-bold mb-3 text-red-400">불신</p>
 
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         playSound("sheep");
                         if (distrustAmount >= maxBet) return;
+
+                        const nextAmount = distrustAmount + 1;
+
                         setTrustAmount(0);
-                        setDistrustAmount(distrustAmount + 1);
+                        setDistrustAmount(nextAmount);
+
+                        await set(
+                          ref(
+                            database,
+                            `rooms/${roomCode}/liveBets/${playerName}`
+                          ),
+                          {
+                            name: playerName,
+                            choice: "불신",
+                            amount: nextAmount,
+                          }
+                        );
                       }}
                       className="w-full rounded-xl bg-white text-green-950 py-2 font-bold"
                     >
@@ -1574,14 +1584,30 @@ export default function Home() {
                     </div>
 
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         playSound("sheep");
                         if (
                           specialRulesDisabled &&
                           forcedDistrustShepherd === shepherd
                         )
                           return;
-                        setDistrustAmount(Math.max(0, distrustAmount - 1));
+
+                        const nextAmount = Math.max(0, distrustAmount - 1);
+                        setDistrustAmount(nextAmount);
+
+                        await set(
+                          ref(
+                            database,
+                            `rooms/${roomCode}/liveBets/${playerName}`
+                          ),
+                          nextAmount > 0
+                            ? {
+                                name: playerName,
+                                choice: "불신",
+                                amount: nextAmount,
+                              }
+                            : null
+                        );
                       }}
                       className="w-full rounded-xl bg-white text-green-950 py-2 font-bold"
                     >
@@ -1875,27 +1901,18 @@ export default function Home() {
           ))}
         </div>
 
-        <div className="flex flex-col gap-3">
-          {playerName === hostName ? (
-            <button
-              onClick={startGame}
-              className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold"
-            >
-              게임 시작
-            </button>
-          ) : (
-            <p className="text-green-100 text-center">
-              방장이 게임을 시작할 때까지 기다리세요.
-            </p>
-          )}
-
+        {playerName === hostName ? (
           <button
-            onClick={leaveGame}
-            className="w-full rounded-2xl bg-red-500 text-white py-4 text-lg font-bold"
+            onClick={startGame}
+            className="w-full rounded-2xl bg-white text-green-950 py-4 text-lg font-bold"
           >
-            나가기
+            게임 시작
           </button>
-        </div>
+        ) : (
+          <p className="text-green-100 text-center">
+            방장이 게임을 시작할 때까지 기다리세요.
+          </p>
+        )}
       </main>
     );
   }
@@ -1911,7 +1928,7 @@ export default function Home() {
           양치기 소년의 외침을 믿을지, 의심할지 선택하세요.
         </p>
 
-        <div className="flex justify-center mb-6">
+        <div className="flex justify-center gap-3 mb-6">
           <button
             onClick={() => {
               playSound("click");
@@ -1921,8 +1938,19 @@ export default function Home() {
           >
             {showRules ? "룰 닫기" : "룰 설명"}
           </button>
+
+          <button
+            onClick={() => {
+              playSound("click");
+              setShowSettings(!showSettings);
+            }}
+            className="rounded-xl bg-white/10 px-5 py-3 text-sm font-bold"
+          >
+            설정
+          </button>
         </div>
 
+        {showSettings && SettingsCard}
         {showRules && RulesCard}
 
         <div className="flex flex-col gap-4">
