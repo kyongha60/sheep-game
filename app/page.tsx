@@ -360,7 +360,7 @@ export default function Home() {
     shuffledPlayers.forEach((player) => {
       playerData[player] = {
         name: player,
-        sheep: startingSheep,
+        sheep: shuffledPlayers.length * 2,
         eliminated: false,
       };
     });
@@ -394,7 +394,7 @@ export default function Home() {
       settings: {
         totalRounds,
         shoutsPerTurn,
-        startingSheep,
+        startingSheep: shuffledPlayers.length * 2,
         shoutTimeLimit,
         betTimeLimit,
       },
@@ -469,7 +469,7 @@ export default function Home() {
       return;
     }
 
-    const safeAmount = Math.min(amount, mySheep, 5);
+    const safeAmount = Math.min(amount, mySheep, players.length);
 
     playSound("bet");
 
@@ -529,86 +529,65 @@ export default function Home() {
       (bet: any) => bet.choice === "불신"
     ).length;
 
+    const T = trustCount;
+    const L = distrustCount;
+
+    const allTrust =
+      trustCount === totalVotedResidents && totalVotedResidents >= 1;
+
+    const allDistrust =
+      distrustCount === totalVotedResidents && totalVotedResidents >= 1;
+
+    const wolfTruthAllDistrust = card === "늑대" && truth && allDistrust;
+    const wolfLieAllTrust = card === "늑대" && !truth && allTrust;
+    const wolfLieAllDistrust = card === "늑대" && !truth && allDistrust;
+    const sheepTruthAllDistrust = card === "평화" && truth && allDistrust;
+
     let eventName = "";
-    let skipBasic = false;
-    let instantNextShepherd = false;
 
-    if (
-      truth &&
-      trustCount === totalVotedResidents &&
-      totalVotedResidents >= 1 &&
-      !room.specialRulesDisabled
-    ) {
-      eventName = "완벽한 진실의 성공";
-      skipBasic = true;
-      instantNextShepherd = true;
-    }
+    // 주민 점수 계산
+    // 기본: 맞추면 +베팅, 틀리면 -베팅
+    // 특수: 늑대-진실-만장불신 / 늑대-거짓-만장신뢰는 주민이 베팅의 2배를 잃음
+    validBets.forEach((bet: any) => {
+      const name = bet.name;
+      const amount = bet.amount;
+      const playerTrusted = bet.choice === "신뢰";
 
-    if (
-      card === "늑대" &&
-      roomShout === "늑대" &&
-      truth &&
-      distrustCount === totalVotedResidents &&
-      totalVotedResidents >= 1 &&
-      !room.specialRulesDisabled
-    ) {
-      eventName = "완벽한 진실의 실패";
-      skipBasic = true;
+      const correct =
+        (truth && playerTrusted) || (!truth && !playerTrusted);
+
+      if (wolfTruthAllDistrust || wolfLieAllTrust) {
+        updatedPlayers[name].sheep -= amount * 2;
+      } else if (correct) {
+        updatedPlayers[name].sheep += amount;
+      } else {
+        updatedPlayers[name].sheep -= amount;
+      }
+    });
+
+    // 양치기 점수 계산
+    // 기본: 진실 = T-L, 거짓 = 2(T-L)
+    if (wolfLieAllDistrust) {
       updatedPlayers[roomShepherd].sheep = 0;
       updatedPlayers[roomShepherd].eliminated = true;
-      instantNextShepherd = true;
-    }
+      eventName = "늑대-거짓-만장불신: 양치기 몰수패";
+    } else if (sheepTruthAllDistrust) {
+      updatedPlayers[roomShepherd].sheep += 2 * (T - L);
+      eventName = "평화-진실-만장불신: 양치기 2배 정산";
+    } else {
+      if (truth) {
+        updatedPlayers[roomShepherd].sheep += T - L;
+      } else {
+        updatedPlayers[roomShepherd].sheep += 2 * (T - L);
+      }
 
-    if (
-      card === "늑대" &&
-      roomShout === "평화" &&
-      !truth &&
-      trustCount === totalVotedResidents &&
-      totalVotedResidents >= 1 &&
-      !room.specialRulesDisabled
-    ) {
-      eventName = "완벽한 거짓의 성공";
-      skipBasic = true;
+      if (wolfTruthAllDistrust) {
+        eventName = "늑대-진실-만장불신: 주민 2배 손실";
+      }
 
-      validBets.forEach((bet: any) => {
-        updatedPlayers[bet.name].sheep -= bet.amount * 2;
-        updatedPlayers[roomShepherd].sheep += bet.amount * 2;
-      });
-    }
-
-    if (
-      card === "평화" &&
-      roomShout === "늑대" &&
-      !truth &&
-      distrustCount === totalVotedResidents &&
-      totalVotedResidents >= 1 &&
-      !room.specialRulesDisabled
-    ) {
-      eventName = "완벽한 거짓의 실패";
-      skipBasic = true;
-      updatedPlayers[roomShepherd].sheep -= 1;
-    }
-
-    if (!skipBasic) {
-      validBets.forEach((bet: any) => {
-        const name = bet.name;
-        const amount = bet.amount;
-
-        if (truth) {
-          if (bet.choice === "신뢰") {
-            updatedPlayers[name].sheep += amount;
-          } else {
-            updatedPlayers[name].sheep -= amount;
-          }
-        } else {
-          if (bet.choice === "신뢰") {
-            updatedPlayers[name].sheep -= amount;
-            updatedPlayers[roomShepherd].sheep += amount;
-          } else {
-            updatedPlayers[name].sheep += amount;
-          }
-        }
-      });
+      if (wolfLieAllTrust) {
+        eventName = "늑대-거짓-만장신뢰: 주민 2배 손실";
+      }
     }
 
     Object.keys(updatedPlayers).forEach((name) => {
@@ -630,19 +609,10 @@ export default function Home() {
       isTruth: truth,
       specialEvent: eventName || timeoutMessage || "",
       resultChanges,
-      forceNextShepherd: instantNextShepherd,
-      specialRulesDisabled:
-        eventName === "완벽한 거짓의 실패"
-          ? true
-          : room.specialRulesDisabled || false,
-      forcedDistrustAmount:
-        eventName === "완벽한 거짓의 실패"
-          ? 2
-          : room.forcedDistrustAmount || null,
-      forcedDistrustShepherd:
-        eventName === "완벽한 거짓의 실패"
-          ? roomShepherd
-          : room.forcedDistrustShepherd || null,
+      forceNextShepherd: false,
+      specialRulesDisabled: false,
+      forcedDistrustAmount: null,
+      forcedDistrustShepherd: null,
     });
 
     setPlayerScores(updatedPlayers);
@@ -815,20 +785,20 @@ export default function Home() {
   };
 
   const getSpecialEventDescription = (eventName: string) => {
-    if (eventName === "완벽한 진실의 성공") {
-      return "실제 카드와 외침이 일치했고, 모든 베팅 주민이 신뢰했습니다. 양 변화 없이 다음 양치기로 넘어갑니다.";
+    if (eventName === "늑대-진실-만장불신: 주민 2배 손실") {
+      return "실제 카드는 늑대였고 양치기도 늑대를 외쳤지만, 모든 주민이 불신했습니다. 주민들은 각자 건 양의 2배를 잃습니다.";
     }
 
-    if (eventName === "완벽한 진실의 실패") {
-      return "실제 카드가 늑대였고 양치기가 진실을 외쳤지만, 모든 베팅 주민이 불신했습니다. 양치기는 모든 양을 잃습니다.";
+    if (eventName === "늑대-거짓-만장신뢰: 주민 2배 손실") {
+      return "실제 카드는 늑대였고 양치기는 평화라고 거짓말했으며, 모든 주민이 신뢰했습니다. 주민들은 각자 건 양의 2배를 잃습니다.";
     }
 
-    if (eventName === "완벽한 거짓의 성공") {
-      return "실제 카드는 늑대였지만 양치기가 평화라고 거짓을 외쳤고, 모든 베팅 주민이 신뢰했습니다. 양치기가 베팅 양의 2배를 가져갑니다.";
+    if (eventName === "늑대-거짓-만장불신: 양치기 몰수패") {
+      return "실제 카드는 늑대였고 양치기는 평화라고 거짓말했지만, 모든 주민이 불신했습니다. 양치기는 모든 양을 잃고 탈락합니다.";
     }
 
-    if (eventName === "완벽한 거짓의 실패") {
-      return "실제 카드는 평화였지만 양치기가 늑대라고 거짓을 외쳤고, 모든 베팅 주민이 불신했습니다. 양치기는 양 1마리를 잃고 불신 2 고정 효과가 적용됩니다.";
+    if (eventName === "평화-진실-만장불신: 양치기 2배 정산") {
+      return "실제 카드는 평화였고 양치기도 평화를 외쳤지만, 모든 주민이 불신했습니다. 양치기는 2 × (신뢰 인원 - 불신 인원)으로 정산합니다.";
     }
 
     return "";
@@ -868,64 +838,104 @@ export default function Home() {
       <div className="mb-4">
         <h3 className="font-bold text-lg mb-2">기본 진행</h3>
         <p className="mb-2">
-          플레이어들은 순서대로 양치기가 되며 카드를 뽑고 외침을 합니다.
+          플레이어들은 순서대로 양치기가 되며, 양치기는 카드를 뽑고
+          “늑대가 왔다” 또는 “평화롭다” 중 하나를 외칩니다.
         </p>
         <p>
-          주민들은 외침을 믿을지(<span className="text-blue-700 font-bold">신뢰</span>), 의심할지(
-          <span className="text-red-700 font-bold">불신</span>) 양을 걸고 베팅합니다.
+          주민들은 양치기의 외침이 진실인지 거짓인지 판단하여
+          <span className="text-blue-700 font-bold"> 신뢰</span> 또는
+          <span className="text-red-700 font-bold"> 불신</span>에 베팅합니다.
         </p>
+      </div>
+
+      <div className="mb-4">
+        <h3 className="font-bold text-lg mb-2">시작 양 / 베팅</h3>
+        <p className="mb-2">
+          게임 시작 시 각 플레이어는 플레이어 수의 2배만큼 양을 받습니다.
+        </p>
+        <p>
+          주민은 최소 1마리부터 최대 플레이어 수만큼 베팅할 수 있습니다.
+          단, 자신이 가진 양보다 많이 걸 수는 없습니다.
+        </p>
+      </div>
+
+      <div className="mb-4">
+        <h3 className="font-bold text-lg mb-2">주민 정산</h3>
+        <p>
+          주민은 양치기의 외침이 진실인지 거짓인지 맞추면 베팅한 만큼 양을
+          얻고, 틀리면 베팅한 만큼 양을 잃습니다.
+        </p>
+      </div>
+
+      <div className="mb-4">
+        <h3 className="font-bold text-lg mb-2">양치기 정산</h3>
+        <p className="mb-2">
+          양치기가 진실을 말했을 때는
+          <span className="font-bold"> 신뢰 인원 - 불신 인원</span> 만큼
+          양을 얻거나 잃습니다.
+        </p>
+        <p>
+          양치기가 거짓말을 했을 때는
+          <span className="font-bold"> 2 × (신뢰 인원 - 불신 인원)</span> 만큼
+          양을 얻거나 잃습니다.
+        </p>
+      </div>
+
+      <div className="mb-4">
+        <h3 className="font-bold text-lg mb-2">특수 룰</h3>
+
+        <div className="space-y-2">
+          <div className="rounded-xl bg-red-100 p-3">
+            <p className="font-bold">늑대 - 진실 - 만장불신</p>
+            <p>
+              실제 늑대가 나왔고 양치기도 늑대를 외쳤지만 모든 주민이
+              불신하면, 주민들은 각자 건 양의 2배를 잃습니다.
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-yellow-100 p-3">
+            <p className="font-bold">늑대 - 거짓 - 만장신뢰</p>
+            <p>
+              실제 늑대가 나왔고 양치기가 평화라고 거짓말했는데 모든 주민이
+              신뢰하면, 주민들은 각자 건 양의 2배를 잃습니다.
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-gray-100 p-3">
+            <p className="font-bold">늑대 - 거짓 - 만장불신</p>
+            <p>
+              실제 늑대가 나왔고 양치기가 평화라고 거짓말했는데 모든 주민이
+              불신하면, 양치기는 모든 양을 잃고 탈락합니다.
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-blue-100 p-3">
+            <p className="font-bold">평화 - 진실 - 만장불신</p>
+            <p>
+              실제 평화가 나왔고 양치기도 평화를 외쳤지만 모든 주민이
+              불신하면, 양치기는 2 × (신뢰 인원 - 불신 인원)으로 정산합니다.
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="mb-4">
         <h3 className="font-bold text-lg mb-2">제한시간 / 기권</h3>
         <p className="mb-2">
-          양치기는 카드를 뽑은 뒤 정해진 시간 안에 “늑대가 왔다” 또는
-          “평화롭다”를 외쳐야 합니다. 제한시간 안에 외치지 못하면 양
-          2마리를 잃고 해당 외침이 종료됩니다.
+          양치기가 제한시간 안에 외치지 못하면 양 2마리를 잃습니다.
         </p>
         <p>
-          주민이 정해진 시간 안에 베팅하지 못하면 기권 처리되어 양
-          2마리를 잃습니다. 단, 기권자는 특수 룰의 “모든 주민이
-          신뢰/불신” 판정에서는 제외됩니다.
+          주민이 제한시간 안에 베팅하지 못하면 기권 처리되어 양 2마리를
+          잃습니다. 기권자는 만장일치 특수룰 판정에서 제외됩니다.
         </p>
       </div>
 
       <div>
-        <h3 className="font-bold text-lg mb-2">특수 룰</h3>
-
-        <div className="space-y-2">
-          <div className="rounded-xl bg-green-100 p-3">
-            <p className="font-bold">완벽한 진실의 성공</p>
-            <p>
-              진실 외침에 모든 베팅 주민이 신뢰하면 양 변화 없이 즉시 다음
-              양치기로 넘어갑니다.
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-red-100 p-3">
-            <p className="font-bold">완벽한 진실의 실패</p>
-            <p>
-              늑대를 진실로 외쳤는데 모든 베팅 주민이 불신하면 양치기는
-              모든 양을 잃고 즉시 다음 양치기로 넘어갑니다.
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-yellow-100 p-3">
-            <p className="font-bold">완벽한 거짓의 성공</p>
-            <p>
-              늑대를 뽑고 평화라고 거짓말했는데 모두 신뢰하면, 양치기는
-              신뢰에 걸린 양의 2배를 가져갑니다.
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-gray-100 p-3">
-            <p className="font-bold">완벽한 거짓의 실패</p>
-            <p>
-              평화를 뽑고 늑대라고 거짓말했는데 모두 불신하면, 양치기는 양
-              1마리를 잃고 해당 양치기 턴 동안 불신 베팅이 2로 고정됩니다.
-            </p>
-          </div>
-        </div>
+        <h3 className="font-bold text-lg mb-2">승리 조건</h3>
+        <p>
+          정해진 라운드가 모두 끝났을 때 가장 많은 양을 가진 플레이어가
+          승리합니다. 양이 0마리가 되면 탈락합니다.
+        </p>
       </div>
     </div>
   );
@@ -933,7 +943,7 @@ export default function Home() {
   if (screen === "game") {
     const isShepherd = playerName === shepherd;
     const isEliminated = !!playerScores[playerName]?.eliminated;
-    const maxBet = Math.max(1, Math.min(5, mySheep));
+    const maxBet = Math.max(1, Math.min(players.length, mySheep));
 
     const previewBets: Record<string, Bet> = {
       ...liveBets,
@@ -1713,7 +1723,7 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl bg-white/10 p-4">
-            <p className="font-bold mb-3">시작 양 개수</p>
+            <p className="font-bold mb-3">시작 양 개수 (게임 시작 시 플레이어 수 × 2로 자동 적용)</p>
             <div className="flex items-center justify-between">
               <button
                 onClick={() => {
@@ -1885,8 +1895,7 @@ export default function Home() {
         <p className="text-green-100 mb-2">방장: {hostName || "아직 없음"}</p>
 
         <p className="text-green-100 mb-6">
-          설정: 총 {totalRounds}라운드 / 외침 {shoutsPerTurn}번 / 시작 양{" "}
-          {startingSheep}마리
+          설정: 총 {totalRounds}라운드 / 외침 {shoutsPerTurn}번 / 시작 양 플레이어 수 × 2
         </p>
 
         <div className="space-y-3 mb-8">
@@ -2006,4 +2015,3 @@ export default function Home() {
       </div>
     </main>
   );
-}
