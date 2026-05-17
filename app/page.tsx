@@ -38,11 +38,11 @@ export default function Home() {
   const [currentRound, setCurrentRound] = useState(1);
   const [roundInTurn, setRoundInTurn] = useState(1);
 
-  const [totalRounds, setTotalRounds] = useState(7);
-  const [shoutsPerTurn, setShoutsPerTurn] = useState(3);
-  const [startingSheep, setStartingSheep] = useState(7);
-  const [shoutTimeLimit, setShoutTimeLimit] = useState(30);
-  const [betTimeLimit, setBetTimeLimit] = useState(180);
+  const [totalRounds, setTotalRounds] = useState(3);
+  const [shoutsPerTurn, setShoutsPerTurn] = useState(1);
+  const [startingSheep, setStartingSheep] = useState(2);
+  const [shoutTimeLimit, setShoutTimeLimit] = useState(15);
+  const [betTimeLimit, setBetTimeLimit] = useState(30);
   const [phaseEndsAt, setPhaseEndsAt] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [timeoutHandled, setTimeoutHandled] = useState(false);
@@ -133,11 +133,11 @@ export default function Home() {
       }
 
       if (data.settings) {
-        setTotalRounds(data.settings.totalRounds ?? 7);
-        setShoutsPerTurn(data.settings.shoutsPerTurn ?? 3);
-        setStartingSheep(data.settings.startingSheep ?? 7);
-        setShoutTimeLimit(data.settings.shoutTimeLimit ?? 30);
-        setBetTimeLimit(data.settings.betTimeLimit ?? 180);
+        setTotalRounds(data.settings.totalRounds ?? 3);
+        setShoutsPerTurn(data.settings.shoutsPerTurn ?? 1);
+        setStartingSheep(data.settings.startingSheep ?? 2);
+        setShoutTimeLimit(data.settings.shoutTimeLimit ?? 15);
+        setBetTimeLimit(data.settings.betTimeLimit ?? 30);
       }
 
       setPlayerOrder(data.playerOrder || []);
@@ -355,12 +355,14 @@ export default function Home() {
     }
 
     const shuffledPlayers = [...players].sort(() => Math.random() - 0.5);
+    const actualTotalRounds = shuffledPlayers.length * 3;
+    const actualStartingSheep = shuffledPlayers.length * 2;
     const playerData: Record<string, Player> = {};
 
     shuffledPlayers.forEach((player) => {
       playerData[player] = {
         name: player,
-        sheep: shuffledPlayers.length * 2,
+        sheep: actualStartingSheep,
         eliminated: false,
       };
     });
@@ -392,9 +394,9 @@ export default function Home() {
       forcedDistrustAmount: null,
       forcedDistrustShepherd: null,
       settings: {
-        totalRounds,
+        totalRounds: actualTotalRounds,
         shoutsPerTurn,
-        startingSheep: shuffledPlayers.length * 2,
+        startingSheep: actualStartingSheep,
         shoutTimeLimit,
         betTimeLimit,
       },
@@ -572,8 +574,8 @@ export default function Home() {
       updatedPlayers[roomShepherd].eliminated = true;
       eventName = "늑대-거짓-만장불신: 양치기 몰수패";
     } else if (sheepTruthAllDistrust) {
-      updatedPlayers[roomShepherd].sheep += 2 * (T - L);
-      eventName = "평화-진실-만장불신: 양치기 2배 정산";
+      updatedPlayers[roomShepherd].sheep += -2 * (T - L);
+      eventName = "평화-진실-만장불신: 양치기 -2배 정산";
     } else {
       if (truth) {
         updatedPlayers[roomShepherd].sheep += T - L;
@@ -797,8 +799,8 @@ export default function Home() {
       return "실제 카드는 늑대였고 양치기는 평화라고 거짓말했지만, 모든 주민이 불신했습니다. 양치기는 모든 양을 잃고 탈락합니다.";
     }
 
-    if (eventName === "평화-진실-만장불신: 양치기 2배 정산") {
-      return "실제 카드는 평화였고 양치기도 평화를 외쳤지만, 모든 주민이 불신했습니다. 양치기는 2 × (신뢰 인원 - 불신 인원)으로 정산합니다.";
+    if (eventName === "평화-진실-만장불신: 양치기 -2배 정산") {
+      return "실제 카드는 평화였고 양치기도 평화를 외쳤지만, 모든 주민이 불신했습니다. 양치기는 -2 × (신뢰 인원 - 불신 인원)으로 정산합니다.";
     }
 
     return "";
@@ -913,7 +915,7 @@ export default function Home() {
             <p className="font-bold">평화 - 진실 - 만장불신</p>
             <p>
               실제 평화가 나왔고 양치기도 평화를 외쳤지만 모든 주민이
-              불신하면, 양치기는 2 × (신뢰 인원 - 불신 인원)으로 정산합니다.
+              불신하면, 양치기는 -2 × (신뢰 인원 - 불신 인원)으로 정산합니다.
             </p>
           </div>
         </div>
@@ -927,6 +929,10 @@ export default function Home() {
         <p>
           주민이 제한시간 안에 베팅하지 못하면 기권 처리되어 양 2마리를
           잃습니다. 기권자는 만장일치 특수룰 판정에서 제외됩니다.
+        </p>
+        <p className="mt-2">
+          베팅 제한시간이 설정된 경우 마지막 10초는 블라인드 구간입니다.
+          이때는 전체 신뢰/불신 수와 각 플레이어의 베팅 현황이 결과 공개 전까지 숨겨집니다.
         </p>
       </div>
 
@@ -963,6 +969,12 @@ export default function Home() {
     );
 
     const allResidentsBetted = activeResidents.every((name) => bets[name]);
+
+    const isBettingBlind =
+      phase === "betting" &&
+      !!phaseEndsAt &&
+      timeLeft > 0 &&
+      timeLeft <= 10;
 
     if (phase === "finished") {
       return (
@@ -1126,21 +1138,30 @@ export default function Home() {
           </div>
 
           {phase === "betting" && (
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="rounded-xl bg-white text-green-950 p-3 text-center">
-                <p className="text-sm">전체 신뢰</p>
-                <p className="text-2xl font-bold text-blue-700">
-                  🐑 {totalTrust}
+            isBettingBlind ? (
+              <div className="rounded-xl bg-black/40 text-white p-4 mb-4 text-center">
+                <p className="text-lg font-bold">블라인드 구간</p>
+                <p className="text-sm text-white/80 mt-1">
+                  마지막 10초 동안 베팅 현황은 숨겨집니다.
                 </p>
               </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="rounded-xl bg-white text-green-950 p-3 text-center">
+                  <p className="text-sm">전체 신뢰</p>
+                  <p className="text-2xl font-bold text-blue-700">
+                    🐑 {totalTrust}
+                  </p>
+                </div>
 
-              <div className="rounded-xl bg-white/10 text-white p-3 text-center">
-                <p className="text-sm">전체 불신</p>
-                <p className="text-2xl font-bold text-red-400">
-                  🐑 {totalDistrust}
-                </p>
+                <div className="rounded-xl bg-white/10 text-white p-3 text-center">
+                  <p className="text-sm">전체 불신</p>
+                  <p className="text-2xl font-bold text-red-400">
+                    🐑 {totalDistrust}
+                  </p>
+                </div>
               </div>
-            </div>
+            )
           )}
 
           <div className="space-y-2">
@@ -1169,7 +1190,7 @@ export default function Home() {
                       <div className="flex flex-col items-end">
                         <span>🐑 {player.sheep}</span>
 
-                        {phase === "betting" && previewBets[name] && (
+                        {phase === "betting" && !isBettingBlind && previewBets[name] && (
                           <span
                             className={
                               previewBets[name].choice === "불신"
@@ -1179,12 +1200,6 @@ export default function Home() {
                           >
                             {previewBets[name].choice}{" "}
                             {previewBets[name].amount}
-                          </span>
-                        )}
-
-                        {phase === "betting" && bets[name] && (
-                          <span className="text-xs text-yellow-300 font-bold">
-                            베팅 확정
                           </span>
                         )}
                       </div>
@@ -1674,26 +1689,8 @@ export default function Home() {
         <div className="space-y-4 mb-8">
           <div className="rounded-2xl bg-white/10 p-4">
             <p className="font-bold mb-3">총 라운드 수</p>
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => {
-                  playSound("click");
-                  setTotalRounds(Math.max(1, totalRounds - 1));
-                }}
-                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
-              >
-                -
-              </button>
-              <span className="text-3xl font-bold">{totalRounds}</span>
-              <button
-                onClick={() => {
-                  playSound("click");
-                  setTotalRounds(totalRounds + 1);
-                }}
-                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
-              >
-                +
-              </button>
+            <div className="rounded-xl bg-white text-green-950 px-5 py-4 text-center font-bold">
+              게임 시작 시 플레이어 수 × 3으로 자동 설정
             </div>
           </div>
 
@@ -1723,27 +1720,9 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl bg-white/10 p-4">
-            <p className="font-bold mb-3">시작 양 개수 (게임 시작 시 플레이어 수 × 2로 자동 적용)</p>
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => {
-                  playSound("click");
-                  setStartingSheep(Math.max(1, startingSheep - 1));
-                }}
-                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
-              >
-                -
-              </button>
-              <span className="text-3xl font-bold">{startingSheep}</span>
-              <button
-                onClick={() => {
-                  playSound("click");
-                  setStartingSheep(startingSheep + 1);
-                }}
-                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
-              >
-                +
-              </button>
+            <p className="font-bold mb-3">시작 양 개수</p>
+            <div className="rounded-xl bg-white text-green-950 px-5 py-4 text-center font-bold">
+              게임 시작 시 플레이어 수 × 2로 자동 설정
             </div>
           </div>
 
@@ -1895,7 +1874,7 @@ export default function Home() {
         <p className="text-green-100 mb-2">방장: {hostName || "아직 없음"}</p>
 
         <p className="text-green-100 mb-6">
-          설정: 총 {totalRounds}라운드 / 외침 {shoutsPerTurn}번 / 시작 양 플레이어 수 × 2
+          설정: 총 라운드 플레이어 수 × 3 / 외침 {shoutsPerTurn}번 / 시작 양 플레이어 수 × 2
         </p>
 
         <div className="space-y-3 mb-8">
@@ -1988,8 +1967,13 @@ export default function Home() {
           <p className="mb-3">
             이 게임은 우왁굳 콘텐츠에서 소개된 양치기 소년 게임 룰을
             바탕으로 제작되었습니다. 원 룰 정리와 아이디어에 도움을 준
-            김눈눈님과 우왁굳님께 감사드립니다. 이 게임은 비공식 팬 게임이며 
-            어느 영리적인 목적으로도 사용되지 않습니다. (제작자: Yongha Kim, 이선, 강효식) (테스터: 이용원, 김소영)
+            김눈눈님과 우왁굳님께 감사드립니다. 이 게임은 비공식 팬 게임이며
+            어느 영리적인 목적으로도 사용되지 않습니다.
+            <br />
+            <br />
+            개발자: 김용하, 강효식, 이선
+            <br />
+            테스터: 이용원, 김소영, 송자영, 조태훈, 이연주, 김민하
           </p>
 
           <div className="flex flex-col gap-3">
