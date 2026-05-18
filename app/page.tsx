@@ -464,6 +464,42 @@ export default function Home() {
     setDistrustAmount(0);
   };
 
+  const randomBet = async () => {
+    if (!playerName || playerName === shepherd) return;
+    if (playerScores[playerName]?.eliminated) return;
+
+    playSound("sheep");
+
+    const forcedDistrustActive =
+      specialRulesDisabled &&
+      forcedDistrustShepherd === shepherd &&
+      playerName !== shepherd;
+
+    const randomChoice: "신뢰" | "불신" = forcedDistrustActive
+      ? "불신"
+      : Math.random() < 0.5
+      ? "신뢰"
+      : "불신";
+
+    const randomAmount = forcedDistrustActive
+      ? Math.min(forcedDistrustAmount || 2, mySheep)
+      : Math.max(1, Math.floor(Math.random() * maxBet) + 1);
+
+    if (randomChoice === "신뢰") {
+      setTrustAmount(randomAmount);
+      setDistrustAmount(0);
+    } else {
+      setTrustAmount(0);
+      setDistrustAmount(randomAmount);
+    }
+
+    await set(ref(database, `rooms/${roomCode}/liveBets/${playerName}`), {
+      name: playerName,
+      choice: randomChoice,
+      amount: randomAmount,
+    });
+  };
+
   const submitBet = async () => {
     if (!playerName || playerName === shepherd) return;
     if (playerScores[playerName]?.eliminated) return;
@@ -504,7 +540,7 @@ export default function Home() {
     await set(ref(database, `rooms/${roomCode}/liveBets/${playerName}`), null);
   };
 
-  const resolveBettingResult = async (timeoutMessage?: string) => {
+  const resolveBettingResult = async (timeoutMessage?: string, isTimeoutResult = false) => {
     const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
     const room = roomSnapshot.val();
     if (!room) return;
@@ -515,6 +551,11 @@ export default function Home() {
     const roomShepherd = room.shepherd;
     const roomPlayers = room.players || {};
     const roomBets = room.bets || {};
+    const roomLiveBets = room.liveBets || {};
+    const effectiveBets: Record<string, Bet> = {
+      ...roomLiveBets,
+      ...roomBets,
+    };
 
     const updatedPlayers: Record<string, Player> = JSON.parse(
       JSON.stringify(roomPlayers)
@@ -530,14 +571,14 @@ export default function Home() {
     );
 
     activeResidents.forEach((name) => {
-      if (!roomBets[name]) {
+      if (!effectiveBets[name]) {
         updatedPlayers[name].sheep -= 2;
       }
     });
 
     const truth = card === roomShout;
 
-    const validBets = Object.values(roomBets).filter(
+    const validBets = Object.values(effectiveBets).filter(
       (bet: any) => bet.choice === "신뢰" || bet.choice === "불신"
     );
 
@@ -637,8 +678,10 @@ export default function Home() {
       phase: "result",
       phaseEndsAt: null,
       isTruth: truth,
-      specialEvent: eventName || timeoutMessage || "",
+      specialEvent: isTimeoutResult && timeoutMessage && !eventName ? timeoutMessage : eventName || "",
       resultChanges,
+      bets: effectiveBets,
+      liveBets: null,
       forceNextShepherd: false,
       specialRulesDisabled: false,
       forcedDistrustAmount: null,
@@ -674,7 +717,7 @@ export default function Home() {
     if (room.phaseEndsAt && room.phaseEndsAt > Date.now()) return;
 
     if (room.phase === "betting") {
-      await resolveBettingResult("시간 초과: 미베팅 주민 -2");
+      await resolveBettingResult("시간 초과: 미베팅 주민 -2", true);
       return;
     }
 
@@ -986,8 +1029,9 @@ export default function Home() {
           양치기가 제한시간 안에 외치지 못하면 양 2마리를 잃습니다.
         </p>
         <p>
-          주민이 제한시간 안에 베팅하지 못하면 기권 처리되어 양 2마리를
-          잃습니다. 기권자는 만장일치 특수룰 판정에서 제외됩니다.
+          주민이 제한시간 안에 아무 베팅도 선택하지 못하면 기권 처리되어 양 2마리를
+          잃습니다. 단, 신뢰 또는 불신 숫자를 올려둔 상태라면 베팅 확정을 누르지 않아도
+          그 선택으로 자동 베팅 처리됩니다. 기권자는 만장일치 특수룰 판정에서 제외됩니다.
         </p>
         <p className="mt-2">
           베팅 제한시간이 설정된 경우 마지막 설정된 블라인드 시간 동안은 블라인드 구간입니다.
@@ -1028,7 +1072,9 @@ export default function Home() {
       (name) => name !== shepherd && !playerScores[name]?.eliminated
     );
 
-    const allResidentsBetted = activeResidents.every((name) => bets[name]);
+    const allResidentsBetted = activeResidents.every(
+      (name) => bets[name] || liveBets[name]
+    );
 
     const isBettingBlind =
       phase === "betting" &&
@@ -1714,12 +1760,21 @@ export default function Home() {
                   </div>
                 </div>
 
-                <button
-                  onClick={submitBet}
-                  className="w-full rounded-2xl bg-yellow-300 text-green-950 py-4 text-lg font-bold"
-                >
-                  베팅 확정
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={randomBet}
+                    className="w-full rounded-2xl bg-purple-400 text-green-950 py-4 text-lg font-bold"
+                  >
+                    랜덤 베팅
+                  </button>
+
+                  <button
+                    onClick={submitBet}
+                    className="w-full rounded-2xl bg-yellow-300 text-green-950 py-4 text-lg font-bold"
+                  >
+                    베팅 확정
+                  </button>
+                </div>
               </div>
             )}
           </div>
