@@ -791,7 +791,6 @@ export default function Home() {
   };
 
   const nextRound = async () => {
-    if (playerName !== shepherd) return;
 
     const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
     const room = roomSnapshot.val();
@@ -1091,9 +1090,7 @@ export default function Home() {
       (name) => name !== shepherd && !playerScores[name]?.eliminated
     );
 
-    const allResidentsBetted = activeResidents.every(
-      (name) => bets[name] || liveBets[name]
-    );
+    const allResidentsBetted = activeResidents.every((name) => bets[name]);
 
     const isBettingBlind =
       phase === "betting" &&
@@ -1476,14 +1473,12 @@ export default function Home() {
               })}
             </div>
 
-            {playerName === shepherd && (
-              <button
-                onClick={nextRound}
-                className="w-full rounded-2xl bg-green-950 text-white py-4 text-lg font-bold mt-6"
-              >
-                다음 라운드
-              </button>
-            )}
+            <button
+              onClick={nextRound}
+              className="w-full rounded-2xl bg-green-950 text-white py-4 text-lg font-bold mt-6"
+            >
+              다음 라운드
+            </button>
           </div>
         )}
 
