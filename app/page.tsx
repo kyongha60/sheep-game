@@ -38,11 +38,12 @@ export default function Home() {
   const [currentRound, setCurrentRound] = useState(1);
   const [roundInTurn, setRoundInTurn] = useState(1);
 
-  const [totalRounds, setTotalRounds] = useState(3);
+  const [totalRounds, setTotalRounds] = useState(0);
   const [shoutsPerTurn, setShoutsPerTurn] = useState(1);
-  const [startingSheep, setStartingSheep] = useState(2);
+  const [startingSheep, setStartingSheep] = useState(0);
   const [shoutTimeLimit, setShoutTimeLimit] = useState(15);
   const [betTimeLimit, setBetTimeLimit] = useState(30);
+  const [blindTimeLimit, setBlindTimeLimit] = useState(10);
   const [phaseEndsAt, setPhaseEndsAt] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [timeoutHandled, setTimeoutHandled] = useState(false);
@@ -92,7 +93,7 @@ export default function Home() {
       sheep: new Audio("/sounds/sheep.mp3"),
     };
 
-    Object.values(soundsRef.current).forEach((audio) => {
+    Object.values(soundsRef.current).forEach((audio: HTMLAudioElement) => {
       audio.preload = "auto";
       audio.volume = volume;
       audio.load();
@@ -133,11 +134,12 @@ export default function Home() {
       }
 
       if (data.settings) {
-        setTotalRounds(data.settings.totalRounds ?? 3);
+        setTotalRounds(data.settings.totalRounds ?? 0);
         setShoutsPerTurn(data.settings.shoutsPerTurn ?? 1);
-        setStartingSheep(data.settings.startingSheep ?? 2);
+        setStartingSheep(data.settings.startingSheep ?? 0);
         setShoutTimeLimit(data.settings.shoutTimeLimit ?? 15);
         setBetTimeLimit(data.settings.betTimeLimit ?? 30);
+        setBlindTimeLimit(data.settings.blindTimeLimit ?? 10);
       }
 
       setPlayerOrder(data.playerOrder || []);
@@ -235,6 +237,7 @@ export default function Home() {
     setPhase("");
     setCurrentRound(1);
     setRoundInTurn(1);
+    setBlindTimeLimit(10);
     setTrustAmount(0);
     setDistrustAmount(0);
     setBets({});
@@ -281,6 +284,7 @@ export default function Home() {
         startingSheep,
         shoutTimeLimit,
         betTimeLimit,
+        blindTimeLimit,
       },
     });
 
@@ -320,7 +324,9 @@ export default function Home() {
     }
 
     if (room.players && room.players[name]) {
-      alert("이미 사용 중인 이름입니다.");
+      // 같은 방 코드와 같은 이름으로 다시 들어오면 진행 중인 게임을 재개합니다.
+      setPlayerName(name);
+      setScreen(room.status === "playing" || room.status === "finished" ? "game" : "lobby");
       return;
     }
 
@@ -355,8 +361,8 @@ export default function Home() {
     }
 
     const shuffledPlayers = [...players].sort(() => Math.random() - 0.5);
-    const actualTotalRounds = shuffledPlayers.length * 3;
-    const actualStartingSheep = shuffledPlayers.length * 2;
+    const actualTotalRounds = totalRounds > 0 ? totalRounds : shuffledPlayers.length * 3;
+    const actualStartingSheep = startingSheep > 0 ? startingSheep : shuffledPlayers.length * 2;
     const playerData: Record<string, Player> = {};
 
     shuffledPlayers.forEach((player) => {
@@ -399,6 +405,7 @@ export default function Home() {
         startingSheep: actualStartingSheep,
         shoutTimeLimit,
         betTimeLimit,
+        blindTimeLimit,
       },
     });
   };
@@ -690,7 +697,7 @@ export default function Home() {
   };
 
   const finishByScores = async (reason: string) => {
-    const finalPlayers = Object.values(playerScores);
+    const finalPlayers = Object.values(playerScores) as Player[];
     const maxSheep = Math.max(...finalPlayers.map((player) => player.sheep));
 
     const finalWinners = finalPlayers
@@ -773,6 +780,27 @@ export default function Home() {
     setDistrustAmount(0);
   };
 
+  const leaveCurrentGame = async () => {
+    if (!roomCode || !playerName) return;
+
+    const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
+    const room = roomSnapshot.val();
+    if (!room || !room.players?.[playerName]) {
+      resetToHome();
+      return;
+    }
+
+    await update(ref(database, `rooms/${roomCode}`), {
+      [`players/${playerName}/sheep`]: 0,
+      [`players/${playerName}/eliminated`]: true,
+      [`players/${playerName}/left`]: true,
+      [`bets/${playerName}`]: null,
+      [`liveBets/${playerName}`]: null,
+    });
+
+    resetToHome();
+  };
+
   const inputClass =
     "w-full rounded-2xl bg-white border border-white/30 px-4 py-4 text-black placeholder-gray-500 text-lg mb-4";
 
@@ -830,6 +858,15 @@ export default function Home() {
       />
 
       <p className="text-center mt-2">{Math.round(volume * 100)}%</p>
+
+      {screen === "game" && phase !== "finished" && (
+        <button
+          onClick={leaveCurrentGame}
+          className="mt-5 w-full rounded-xl bg-red-500 text-white py-3 font-bold"
+        >
+          게임에서 나가기
+        </button>
+      )}
     </div>
   );
 
@@ -931,7 +968,7 @@ export default function Home() {
           잃습니다. 기권자는 만장일치 특수룰 판정에서 제외됩니다.
         </p>
         <p className="mt-2">
-          베팅 제한시간이 설정된 경우 마지막 10초는 블라인드 구간입니다.
+          베팅 제한시간이 설정된 경우 마지막 설정된 블라인드 시간 동안은 블라인드 구간입니다.
           이때는 전체 신뢰/불신 수와 각 플레이어의 베팅 현황이 결과 공개 전까지 숨겨집니다.
         </p>
       </div>
@@ -974,7 +1011,7 @@ export default function Home() {
       phase === "betting" &&
       !!phaseEndsAt &&
       timeLeft > 0 &&
-      timeLeft <= 10;
+      blindTimeLimit > 0 && timeLeft <= blindTimeLimit;
 
     if (phase === "finished") {
       return (
@@ -1053,6 +1090,10 @@ export default function Home() {
           </button>
         </div>
 
+        <div className="mb-3 text-right text-xs text-green-200/80">
+          방 코드: <span className="font-bold tracking-widest text-white">{roomCode}</span>
+        </div>
+
         {showSettings && SettingsCard}
         {showRules && RulesCard}
 
@@ -1118,9 +1159,18 @@ export default function Home() {
         )}
 
         {(phase === "shout" || phase === "betting") && phaseEndsAt && (
-          <div className="rounded-2xl bg-red-500 text-white p-3 mb-4 text-center font-bold">
-            남은 시간: {Math.floor(timeLeft / 60)}:
-            {(timeLeft % 60).toString().padStart(2, "0")}
+          <div
+            className={`sticky top-3 z-40 rounded-2xl p-4 mb-4 text-center font-bold shadow-2xl border-2 ${
+              timeLeft <= 10
+                ? "bg-red-600 text-white border-yellow-300 animate-pulse"
+                : "bg-red-500 text-white border-white/30"
+            }`}
+          >
+            <div className="text-sm opacity-90">{timeLeft <= 10 ? "⚠️ 마지막 10초" : "남은 시간"}</div>
+            <div className="text-3xl">
+              {Math.floor(timeLeft / 60)}:
+              {(timeLeft % 60).toString().padStart(2, "0")}
+            </div>
           </div>
         )}
 
@@ -1142,7 +1192,7 @@ export default function Home() {
               <div className="rounded-xl bg-black/40 text-white p-4 mb-4 text-center">
                 <p className="text-lg font-bold">블라인드 구간</p>
                 <p className="text-sm text-white/80 mt-1">
-                  마지막 10초 동안 베팅 현황은 숨겨집니다.
+                  마지막 블라인드 구간 동안 베팅 현황은 숨겨집니다.
                 </p>
               </div>
             ) : (
@@ -1689,9 +1739,32 @@ export default function Home() {
         <div className="space-y-4 mb-8">
           <div className="rounded-2xl bg-white/10 p-4">
             <p className="font-bold mb-3">총 라운드 수</p>
-            <div className="rounded-xl bg-white text-green-950 px-5 py-4 text-center font-bold">
-              게임 시작 시 플레이어 수 × 3으로 자동 설정
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setTotalRounds(Math.max(0, totalRounds - 1));
+                }}
+                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
+              >
+                -
+              </button>
+              <span className="text-3xl font-bold">
+                {totalRounds === 0 ? "자동" : totalRounds}
+              </span>
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setTotalRounds(totalRounds + 1);
+                }}
+                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
+              >
+                +
+              </button>
             </div>
+            <p className="text-xs text-green-100 mt-3">
+              자동일 경우 게임 시작 시 플레이어 수 × 3으로 설정됩니다.
+            </p>
           </div>
 
           <div className="rounded-2xl bg-white/10 p-4">
@@ -1721,9 +1794,32 @@ export default function Home() {
 
           <div className="rounded-2xl bg-white/10 p-4">
             <p className="font-bold mb-3">시작 양 개수</p>
-            <div className="rounded-xl bg-white text-green-950 px-5 py-4 text-center font-bold">
-              게임 시작 시 플레이어 수 × 2로 자동 설정
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setStartingSheep(Math.max(0, startingSheep - 1));
+                }}
+                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
+              >
+                -
+              </button>
+              <span className="text-3xl font-bold">
+                {startingSheep === 0 ? "자동" : startingSheep}
+              </span>
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setStartingSheep(startingSheep + 1);
+                }}
+                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
+              >
+                +
+              </button>
             </div>
+            <p className="text-xs text-green-100 mt-3">
+              자동일 경우 게임 시작 시 플레이어 수 × 2로 설정됩니다.
+            </p>
           </div>
 
           <div className="rounded-2xl bg-white/10 p-4">
@@ -1772,6 +1868,33 @@ export default function Home() {
                 onClick={() => {
                   playSound("click");
                   setBetTimeLimit(betTimeLimit + 10);
+                }}
+                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white/10 p-4">
+            <p className="font-bold mb-3">블라인드 시간(초)</p>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setBlindTimeLimit(Math.max(0, blindTimeLimit - 5));
+                }}
+                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
+              >
+                -
+              </button>
+              <span className="text-3xl font-bold">
+                {blindTimeLimit === 0 ? "없음" : blindTimeLimit}
+              </span>
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setBlindTimeLimit(blindTimeLimit + 5);
                 }}
                 className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
               >
@@ -1874,7 +1997,7 @@ export default function Home() {
         <p className="text-green-100 mb-2">방장: {hostName || "아직 없음"}</p>
 
         <p className="text-green-100 mb-6">
-          설정: 총 라운드 플레이어 수 × 3 / 외침 {shoutsPerTurn}번 / 시작 양 플레이어 수 × 2
+          설정: 총 라운드 {totalRounds === 0 ? "자동(플레이어 수 × 3)" : totalRounds} / 외침 {shoutsPerTurn}번 / 시작 양 {startingSheep === 0 ? "자동(플레이어 수 × 2)" : startingSheep}
         </p>
 
         <div className="space-y-3 mb-8">
