@@ -10,6 +10,7 @@ type Player = {
   name: string;
   sheep: number;
   eliminated: boolean;
+  left?: boolean;
 };
 
 type Bet = {
@@ -334,6 +335,13 @@ export default function Home() {
 
     if (room.players && room.players[name]) {
       // 같은 방 코드와 같은 이름으로 다시 들어오면 진행 중인 게임을 재개합니다.
+      // 이전에 나간 플레이어는 탈락 상태는 유지하되 연결 상태만 복구합니다.
+      if (room.players[name].left) {
+        await update(ref(database, `rooms/${roomCode}/players/${name}`), {
+          left: false,
+        });
+      }
+
       setPlayerName(name);
       setScreen(room.status === "playing" || room.status === "finished" ? "game" : "lobby");
       return;
@@ -481,9 +489,14 @@ export default function Home() {
       ? "신뢰"
       : "불신";
 
+    const currentMaxBet = Math.max(
+      1,
+      Math.min(maxBetLimit === 0 ? players.length : maxBetLimit, mySheep)
+    );
+
     const randomAmount = forcedDistrustActive
       ? Math.min(forcedDistrustAmount || 2, mySheep)
-      : Math.max(1, Math.floor(Math.random() * maxBet) + 1);
+      : Math.max(1, Math.floor(Math.random() * currentMaxBet) + 1);
 
     if (randomChoice === "신뢰") {
       setTrustAmount(randomAmount);
@@ -1049,6 +1062,12 @@ export default function Home() {
     </div>
   );
 
+  const VersionBadge = (
+    <div className="fixed top-2 left-2 z-[60] rounded bg-black/30 px-2 py-1 text-[10px] font-bold text-white/60 pointer-events-none">
+      V1
+    </div>
+  );
+
   if (screen === "game") {
     const isShepherd = playerName === shepherd;
     const isEliminated = !!playerScores[playerName]?.eliminated;
@@ -1085,6 +1104,7 @@ export default function Home() {
     if (phase === "finished") {
       return (
         <main className="min-h-screen bg-green-950 text-white px-6 py-10">
+        {VersionBadge}
           <h1 className="text-4xl font-bold mb-4">게임 종료</h1>
 
           <div className="rounded-2xl bg-yellow-300 text-green-950 p-6 mb-6">
@@ -1107,7 +1127,7 @@ export default function Home() {
                   className="flex justify-between rounded-2xl bg-white/10 px-4 py-4"
                 >
                   <span>
-                    {player.eliminated ? "💀" : "🐑"} {player.name}
+                    {player.eliminated ? "💀" : "🐑"} {player.name}{player.left ? " (연결없음)" : ""}
                   </span>
                   <span className="font-bold">{player.sheep}마리</span>
                 </div>
@@ -1127,6 +1147,7 @@ export default function Home() {
 
     return (
       <main className="min-h-screen bg-green-950 text-white px-6 py-6 pb-44">
+      {VersionBadge}
         <div className="flex justify-end gap-2 mb-3 flex-wrap">
           <button
             onClick={() => {
@@ -1283,6 +1304,7 @@ export default function Home() {
                 >
                   <span className="font-bold">
                     {index + 1}. {name}
+                    {player.left ? " (연결없음)" : ""}
                     {name === shepherd ? " 🧑‍🌾" : ""}
                   </span>
 
@@ -1415,7 +1437,7 @@ export default function Home() {
                     className="flex justify-between rounded-xl bg-white/60 px-4 py-3"
                   >
                     <span>
-                      {player.eliminated ? "💀" : "🐑"} {player.name}
+                      {player.eliminated ? "💀" : "🐑"} {player.name}{player.left ? " (연결없음)" : ""}
                     </span>
 
                     <div className="flex flex-col items-end">
@@ -1781,24 +1803,20 @@ export default function Home() {
         )}
 
         <div className="fixed bottom-0 left-0 right-0 bg-green-950/95 border-t border-white/20 p-3 z-50">
-          <div className="mx-auto max-w-md space-y-2">
-            <div className="rounded-xl bg-white/10 px-4 py-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-green-200">{playerName}</span>
+          <div className="mx-auto grid max-w-md grid-cols-2 gap-2">
+            <div className="rounded-xl bg-white/10 px-3 py-3 text-sm">
+              <div className="flex flex-col gap-1">
+                <span className="text-green-200 truncate">{playerName}</span>
                 <span className="font-bold">🐑 {mySheep}마리</span>
-              </div>
-
-              <div className="flex justify-between mt-1">
-                <span className="text-green-200">역할</span>
-                <span className="font-bold">
-                  {isEliminated ? "관전" : isShepherd ? "양치기" : "주민"}
+                <span className="text-green-200">
+                  역할: <span className="font-bold text-white">{isEliminated ? "관전" : isShepherd ? "양치기" : "주민"}</span>
                 </span>
               </div>
             </div>
 
-            {(phase === "shout" || phase === "betting") && phaseEndsAt && (
+            {(phase === "shout" || phase === "betting") && phaseEndsAt ? (
               <div
-                className={`rounded-xl px-4 py-3 text-center font-bold shadow-2xl border-2 ${
+                className={`rounded-xl px-3 py-3 text-center font-bold shadow-2xl border-2 ${
                   timeLeft <= 10
                     ? "bg-red-600 text-white border-yellow-300 animate-pulse"
                     : "bg-red-500 text-white border-white/30"
@@ -1807,10 +1825,14 @@ export default function Home() {
                 <div className="text-xs opacity-90">
                   {timeLeft <= 10 ? "⚠️ 마지막 10초" : "남은 시간"}
                 </div>
-                <div className={timeLeft <= 10 ? "text-4xl" : "text-2xl"}>
+                <div className={timeLeft <= 10 ? "text-3xl" : "text-2xl"}>
                   {Math.floor(timeLeft / 60)}:
                   {(timeLeft % 60).toString().padStart(2, "0")}
                 </div>
+              </div>
+            ) : (
+              <div className="rounded-xl bg-white/10 px-3 py-3 text-center text-sm text-green-200 flex items-center justify-center">
+                타이머 없음
               </div>
             )}
           </div>
@@ -1822,6 +1844,7 @@ export default function Home() {
   if (screen === "create") {
     return (
       <main className="min-h-screen bg-green-950 text-white px-6 py-10">
+      {VersionBadge}
         <button
           onClick={() => {
             playSound("click");
@@ -2080,6 +2103,7 @@ export default function Home() {
   if (screen === "join") {
     return (
       <main className="min-h-screen bg-green-950 text-white px-6 py-10">
+      {VersionBadge}
         <button
           onClick={() => {
             playSound("click");
@@ -2112,6 +2136,7 @@ export default function Home() {
   if (screen === "name") {
     return (
       <main className="min-h-screen bg-green-950 text-white px-6 py-10">
+      {VersionBadge}
         <button
           onClick={() => {
             playSound("click");
@@ -2149,6 +2174,7 @@ export default function Home() {
   if (screen === "lobby") {
     return (
       <main className="min-h-screen bg-green-950 text-white px-6 py-10">
+      {VersionBadge}
         <p className="text-green-200 mb-2">방 코드</p>
         <div className="text-5xl font-bold tracking-widest mb-8 text-white">
           {roomCode}
@@ -2170,6 +2196,7 @@ export default function Home() {
               className="rounded-2xl bg-white/10 px-4 py-4 text-lg"
             >
               🐑 {player}
+              {playerScores[player]?.left ? " (연결없음)" : ""}
               {player === hostName ? " 👑" : ""}
             </div>
           ))}
@@ -2193,6 +2220,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-green-950 text-white flex flex-col items-center justify-center px-6 py-8">
+    {VersionBadge}
       <div className="w-full max-w-sm text-center">
         <div className="text-6xl mb-6">🐑</div>
 
