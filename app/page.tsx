@@ -19,6 +19,7 @@ type Bet = {
 };
 
 type SoundName = "click" | "card" | "bet" | "result" | "sheep";
+type ShepherdScoreMode = "people" | "sheep";
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("home");
@@ -44,6 +45,8 @@ export default function Home() {
   const [shoutTimeLimit, setShoutTimeLimit] = useState(15);
   const [betTimeLimit, setBetTimeLimit] = useState(30);
   const [blindTimeLimit, setBlindTimeLimit] = useState(10);
+  const [maxBetLimit, setMaxBetLimit] = useState(0);
+  const [shepherdScoreMode, setShepherdScoreMode] = useState<ShepherdScoreMode>("people");
   const [phaseEndsAt, setPhaseEndsAt] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [timeoutHandled, setTimeoutHandled] = useState(false);
@@ -140,6 +143,8 @@ export default function Home() {
         setShoutTimeLimit(data.settings.shoutTimeLimit ?? 15);
         setBetTimeLimit(data.settings.betTimeLimit ?? 30);
         setBlindTimeLimit(data.settings.blindTimeLimit ?? 10);
+        setMaxBetLimit(data.settings.maxBetLimit ?? 0);
+        setShepherdScoreMode(data.settings.shepherdScoreMode ?? "people");
       }
 
       setPlayerOrder(data.playerOrder || []);
@@ -238,6 +243,8 @@ export default function Home() {
     setCurrentRound(1);
     setRoundInTurn(1);
     setBlindTimeLimit(10);
+    setMaxBetLimit(0);
+    setShepherdScoreMode("people");
     setTrustAmount(0);
     setDistrustAmount(0);
     setBets({});
@@ -285,6 +292,8 @@ export default function Home() {
         shoutTimeLimit,
         betTimeLimit,
         blindTimeLimit,
+        maxBetLimit,
+        shepherdScoreMode,
       },
     });
 
@@ -363,6 +372,7 @@ export default function Home() {
     const shuffledPlayers = [...players].sort(() => Math.random() - 0.5);
     const actualTotalRounds = totalRounds > 0 ? totalRounds : shuffledPlayers.length * 3;
     const actualStartingSheep = startingSheep > 0 ? startingSheep : shuffledPlayers.length * 2;
+    const actualMaxBetLimit = maxBetLimit > 0 ? maxBetLimit : shuffledPlayers.length;
     const playerData: Record<string, Player> = {};
 
     shuffledPlayers.forEach((player) => {
@@ -406,6 +416,8 @@ export default function Home() {
         shoutTimeLimit,
         betTimeLimit,
         blindTimeLimit,
+        maxBetLimit: actualMaxBetLimit,
+        shepherdScoreMode,
       },
     });
   };
@@ -478,7 +490,8 @@ export default function Home() {
       return;
     }
 
-    const safeAmount = Math.min(amount, mySheep, players.length);
+    const configuredMaxBet = maxBetLimit > 0 ? maxBetLimit : players.length;
+    const safeAmount = Math.min(amount, mySheep, configuredMaxBet);
 
     playSound("bet");
 
@@ -538,8 +551,16 @@ export default function Home() {
       (bet: any) => bet.choice === "불신"
     ).length;
 
-    const T = trustCount;
-    const L = distrustCount;
+    const scoreMode: ShepherdScoreMode = room.settings?.shepherdScoreMode ?? "people";
+    const trustSheep = validBets
+      .filter((bet: any) => bet.choice === "신뢰")
+      .reduce((sum: number, bet: any) => sum + bet.amount, 0);
+    const distrustSheep = validBets
+      .filter((bet: any) => bet.choice === "불신")
+      .reduce((sum: number, bet: any) => sum + bet.amount, 0);
+
+    const T: number = scoreMode === "sheep" ? Number(trustSheep) : Number(trustCount);
+    const L: number = scoreMode === "sheep" ? Number(distrustSheep) : Number(distrustCount);
 
     const allTrust =
       trustCount === totalVotedResidents && totalVotedResidents >= 1;
@@ -893,8 +914,8 @@ export default function Home() {
           게임 시작 시 각 플레이어는 플레이어 수의 2배만큼 양을 받습니다.
         </p>
         <p>
-          주민은 최소 1마리부터 최대 플레이어 수만큼 베팅할 수 있습니다.
-          단, 자신이 가진 양보다 많이 걸 수는 없습니다.
+          주민은 최소 1마리부터 설정된 최대 베팅 개수까지 베팅할 수 있습니다.
+          기본값은 플레이어 수이며, 자신이 가진 양보다 많이 걸 수는 없습니다.
         </p>
       </div>
 
@@ -910,14 +931,15 @@ export default function Home() {
         <h3 className="font-bold text-lg mb-2">양치기 정산</h3>
         <p className="mb-2">
           양치기가 진실을 말했을 때는
-          <span className="font-bold"> 신뢰 인원 - 불신 인원</span> 만큼
+          <span className="font-bold"> T - L</span> 만큼
           양을 얻거나 잃습니다.
         </p>
         <p>
           양치기가 거짓말을 했을 때는
-          <span className="font-bold"> 2 × (신뢰 인원 - 불신 인원)</span> 만큼
+          <span className="font-bold"> 2 × (T - L)</span> 만큼
           양을 얻거나 잃습니다.
         </p>
+        <p className="mt-2 text-xs">기본모드에서는 T/L이 신뢰/불신 인원 수이고, 특수모드에서는 T/L이 실제 베팅 양 수입니다.</p>
       </div>
 
       <div className="mb-4">
@@ -986,7 +1008,8 @@ export default function Home() {
   if (screen === "game") {
     const isShepherd = playerName === shepherd;
     const isEliminated = !!playerScores[playerName]?.eliminated;
-    const maxBet = Math.max(1, Math.min(players.length, mySheep));
+    const configuredMaxBet = maxBetLimit > 0 ? maxBetLimit : players.length;
+    const maxBet = Math.max(1, Math.min(configuredMaxBet, mySheep));
 
     const previewBets: Record<string, Bet> = {
       ...liveBets,
@@ -1057,7 +1080,7 @@ export default function Home() {
     }
 
     return (
-      <main className="min-h-screen bg-green-950 text-white px-6 py-6 pb-24">
+      <main className="min-h-screen bg-green-950 text-white px-6 py-6 pb-44">
         <div className="flex justify-end gap-2 mb-3 flex-wrap">
           <button
             onClick={() => {
@@ -1155,22 +1178,6 @@ export default function Home() {
                 )}
               </tbody>
             </table>
-          </div>
-        )}
-
-        {(phase === "shout" || phase === "betting") && phaseEndsAt && (
-          <div
-            className={`sticky top-3 z-40 rounded-2xl p-4 mb-4 text-center font-bold shadow-2xl border-2 ${
-              timeLeft <= 10
-                ? "bg-red-600 text-white border-yellow-300 animate-pulse"
-                : "bg-red-500 text-white border-white/30"
-            }`}
-          >
-            <div className="text-sm opacity-90">{timeLeft <= 10 ? "⚠️ 마지막 10초" : "남은 시간"}</div>
-            <div className="text-3xl">
-              {Math.floor(timeLeft / 60)}:
-              {(timeLeft % 60).toString().padStart(2, "0")}
-            </div>
           </div>
         )}
 
@@ -1415,10 +1422,26 @@ export default function Home() {
         {isEliminated ? (
           <div className="rounded-2xl bg-white/10 p-5 text-center">
             <h2 className="text-2xl font-bold mb-3">관전 중</h2>
-            <p className="text-green-100">
+            <p className="text-green-100 mb-4">
               양이 0마리가 되어 탈락했습니다. 게임 진행은 계속 볼 수
               있습니다.
             </p>
+
+            {currentCard && (
+              <div className="rounded-2xl bg-white text-green-950 p-4 mt-4">
+                <p className="font-bold mb-2">현재 양치기가 본 카드</p>
+                <div className="text-5xl mb-2">{getCardStyle(currentCard).emoji}</div>
+                <div className={`text-3xl font-bold ${getCardStyle(currentCard).color}`}>
+                  {getCardStyle(currentCard).text}
+                </div>
+
+                {shout && (
+                  <p className="mt-3 font-bold">
+                    외침: {shout === "늑대" ? "늑대가 왔다!" : "평화롭다!"}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         ) : isShepherd ? (
           <div>
@@ -1702,19 +1725,39 @@ export default function Home() {
           </div>
         )}
 
-        <div className="fixed bottom-0 left-0 right-0 bg-green-950/95 border-t border-white/20 p-3">
-          <div className="mx-auto max-w-md rounded-xl bg-white/10 px-4 py-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-green-200">{playerName}</span>
-              <span className="font-bold">🐑 {mySheep}마리</span>
+        <div className="fixed bottom-0 left-0 right-0 bg-green-950/95 border-t border-white/20 p-3 z-50">
+          <div className="mx-auto max-w-md space-y-2">
+            <div className="rounded-xl bg-white/10 px-4 py-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-green-200">{playerName}</span>
+                <span className="font-bold">🐑 {mySheep}마리</span>
+              </div>
+
+              <div className="flex justify-between mt-1">
+                <span className="text-green-200">역할</span>
+                <span className="font-bold">
+                  {isEliminated ? "관전" : isShepherd ? "양치기" : "주민"}
+                </span>
+              </div>
             </div>
 
-            <div className="flex justify-between mt-1">
-              <span className="text-green-200">역할</span>
-              <span className="font-bold">
-                {isEliminated ? "관전" : isShepherd ? "양치기" : "주민"}
-              </span>
-            </div>
+            {(phase === "shout" || phase === "betting") && phaseEndsAt && (
+              <div
+                className={`rounded-xl px-4 py-3 text-center font-bold shadow-2xl border-2 ${
+                  timeLeft <= 10
+                    ? "bg-red-600 text-white border-yellow-300 animate-pulse"
+                    : "bg-red-500 text-white border-white/30"
+                }`}
+              >
+                <div className="text-xs opacity-90">
+                  {timeLeft <= 10 ? "⚠️ 마지막 10초" : "남은 시간"}
+                </div>
+                <div className={timeLeft <= 10 ? "text-4xl" : "text-2xl"}>
+                  {Math.floor(timeLeft / 60)}:
+                  {(timeLeft % 60).toString().padStart(2, "0")}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </main>
@@ -1819,6 +1862,71 @@ export default function Home() {
             </div>
             <p className="text-xs text-green-100 mt-3">
               자동일 경우 게임 시작 시 플레이어 수 × 2로 설정됩니다.
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-white/10 p-4">
+            <p className="font-bold mb-3">최대 베팅 개수</p>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setMaxBetLimit(Math.max(0, maxBetLimit - 1));
+                }}
+                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
+              >
+                -
+              </button>
+              <span className="text-3xl font-bold">
+                {maxBetLimit === 0 ? "자동" : maxBetLimit}
+              </span>
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setMaxBetLimit(maxBetLimit + 1);
+                }}
+                className="rounded-xl bg-white text-green-950 px-5 py-2 font-bold"
+              >
+                +
+              </button>
+            </div>
+            <p className="text-xs text-green-100 mt-3">
+              자동일 경우 게임 시작 시 플레이어 수로 설정됩니다.
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-white/10 p-4">
+            <p className="font-bold mb-3">양치기 점수 계산 모드</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setShepherdScoreMode("people");
+                }}
+                className={`rounded-xl px-4 py-3 font-bold ${
+                  shepherdScoreMode === "people"
+                    ? "bg-yellow-300 text-green-950"
+                    : "bg-white/10 text-white"
+                }`}
+              >
+                기본모드
+              </button>
+              <button
+                onClick={() => {
+                  playSound("click");
+                  setShepherdScoreMode("sheep");
+                }}
+                className={`rounded-xl px-4 py-3 font-bold ${
+                  shepherdScoreMode === "sheep"
+                    ? "bg-yellow-300 text-green-950"
+                    : "bg-white/10 text-white"
+                }`}
+              >
+                특수모드
+              </button>
+            </div>
+            <p className="text-xs text-green-100 mt-3">
+              기본모드: T/L을 인원 수로 계산. 특수모드: T/L을 실제 베팅 양 수로 계산.
             </p>
           </div>
 
